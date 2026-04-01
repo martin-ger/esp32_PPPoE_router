@@ -1,0 +1,11 @@
+# ESP32-C5 target overrides
+
+# ESP32-C5 supports up to 240 MHz
+CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ_240=y
+
+# Use UART for console (USB_SERIAL_JTAG breaks idf.py flash monitor)
+CONFIG_ESP_CONSOLE_UART_DEFAULT=y
+
+# Reduce static log level to save flash space
+CONFIG_LOG_DEFAULT_LEVEL_WARN=y
+CONFIG_LOG_DEFAULT_LEVEL=2

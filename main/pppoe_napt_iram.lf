@@ -1,0 +1,28 @@
+# Place PPPoE and NAPT hot-path functions in IRAM.
+#
+# CONFIG_LWIP_IRAM_OPTIMIZATION already covers ip4_input/output, ethernet_input/output,
+# pbuf ops, UDP, and TCP/IP thread.  Missing from that list — and called on every
+# forwarded packet over a PPPoE uplink — are the PPPoE framing functions and the
+# NAPT table lookup/forward routines.
+#
+# RX path: ethernet_input -> pppoe_data_input -> ppp_input -> ip4_input (wrapped)
+#           -> ip_napt_forward (-> ip_napt_find, ip_napt_find_port) -> ip4_output
+#
+# TX path: netif_output_hook (IRAM) -> ip_napt_forward -> ip4_output -> pppoe_netif_output
+#           -> pppoe_write -> pppoe_xmit -> ethernet_output (IRAM)
+
+[mapping:pppoe_napt_iram]
+archive: liblwip.a
+entries:
+  # PPPoE RX
+  pppoe:pppoe_data_input (noflash_text)
+  # PPPoE TX
+  pppoe:pppoe_xmit (noflash_text)
+  pppoe:pppoe_write (noflash_text)
+  pppoe:pppoe_netif_output (noflash_text)
+  # PPP protocol demux (sits between pppoe_data_input and ip4_input)
+  ppp:ppp_input (noflash_text)
+  # NAPT table — called on every forwarded packet in both directions
+  ip4_napt:ip_napt_forward (noflash_text)
+  ip4_napt:ip_napt_find (noflash_text)
+  ip4_napt:ip_napt_find_port (noflash_text)
