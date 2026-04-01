@@ -4,7 +4,7 @@ cmake_minimum_required(VERSION 3.16)
 
 set(PROJECT_VER "2.4.5")
 include($ENV{IDF_PATH}/tools/cmake/project.cmake)
-project(esp32_nat_router)
+project(esp32_pppoe_router)
 
 # Force esp_app_desc.c to recompile on every build so that
 # __DATE__/__TIME__ in the app descriptor stay current.

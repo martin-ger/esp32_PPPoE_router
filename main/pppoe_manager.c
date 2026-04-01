@@ -255,8 +255,8 @@ static void ppp_link_status_cb(ppp_pcb *pcb, int err_code, void *ctx)
         break;
 
     default:
-        ESP_LOGW(TAG, "PPPoE error: %d", err_code);
-        break;
+        ESP_LOGW(TAG, "PPPoE error: %d — treating as disconnect, will retry", err_code);
+        goto handle_disconnect;
     }
 }
 
@@ -269,13 +269,20 @@ static void pppoe_reconnect_task(void *pvParameters)
     ESP_LOGI(TAG, "Reconnecting PPPoE in 2 seconds...");
     vTaskDelay(pdMS_TO_TICKS(2000));
 
-    /* Clean up old session */
-    if (ppp_pcb_handle != NULL) {
-        pppapi_close(ppp_pcb_handle, 1); /* nocarrier=1: link already down */
-        pppapi_free(ppp_pcb_handle);
-        ppp_pcb_handle = NULL;
-    }
+    /* Clean up old session.
+     * Save and clear ppp_pcb_handle BEFORE calling pppapi_close so that the
+     * PPPERR_USER callback (which fires synchronously inside pppapi_close)
+     * sees ppp_pcb_handle == NULL and skips ppp_free.  We then call
+     * pppapi_free on the saved copy ourselves.  Without this, pppapi_close
+     * triggers PPPERR_USER → ppp_free(handle) + ppp_pcb_handle = NULL, and
+     * the subsequent pppapi_free(NULL) crashes in ppp_free. */
+    ppp_pcb *pcb = ppp_pcb_handle;
+    ppp_pcb_handle = NULL;
     pppoe_session_active = false;
+    if (pcb != NULL) {
+        pppapi_close(pcb, 1); /* nocarrier=1: forces immediate teardown */
+        pppapi_free(pcb);     /* phase is DEAD after close; removes netif from lwIP list */
+    }
 
     /* Only retry if Ethernet link is still up — if it's down the
      * ETHERNET_EVENT_CONNECTED handler will start a new session when

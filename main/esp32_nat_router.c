@@ -66,7 +66,6 @@
 #include "pcap_capture.h"
 #include "remote_console.h"
 #include "syslog_client.h"
-#include "oled_display.h"
 #if CONFIG_MQTT_HOMEASSISTANT
 #include "mqtt_ha.h"
 #endif
@@ -139,6 +138,9 @@ static uint32_t sta_reconnect_delay_ms = STA_RECONNECT_INITIAL_MS;
 uint16_t connect_count = 0;
 bool ap_connect = false;
 bool wifi_scan_active = false;
+#if CONFIG_ETH_UPLINK
+bool eth_link_up = false;
+#endif
 bool has_static_ip = false;
 int led_gpio = -1;  // -1 means LED disabled (none)
 uint8_t led_lowactive = 0;  // 0 = active-high (default), 1 = active-low (inverted)
@@ -359,15 +361,19 @@ static void eth_event_handler(void* arg, esp_event_base_t event_base,
     if (event_base == ETH_EVENT) {
         if (event_id == ETHERNET_EVENT_CONNECTED) {
             ESP_LOGI(TAG, "Ethernet link up");
+            eth_link_up = true;
             if (pppoe_enabled) {
                 extern struct netif *esp_netif_get_netif_impl(esp_netif_t *esp_netif);
                 struct netif *lwip_nif = esp_netif_get_netif_impl(ethNetif);
                 if (lwip_nif) {
                     pppoe_start(lwip_nif);
+                } else {
+                    ESP_LOGE(TAG, "Ethernet link up but lwip netif is NULL — PPPoE not started");
                 }
             }
         } else if (event_id == ETHERNET_EVENT_DISCONNECTED) {
             ESP_LOGI(TAG, "Ethernet link down");
+            eth_link_up = false;
             if (pppoe_enabled) {
                 pppoe_stop();
             }
@@ -790,9 +796,16 @@ void eth_init(const char* static_ip, const char* subnet_mask, const char* gatewa
     // Set DHCP client hostname (Option 12)
     esp_netif_set_hostname(ethNetif, hostname);
 
-    // PPPoE mode: Ethernet is a frame transport only — no DHCP, no static IP
+    // PPPoE mode: Ethernet is a frame transport only — no DHCP, no static IP.
+    // A non-zero placeholder IP is required to suppress esp_netif's
+    // "invalid static ip" error when the link comes up with DHCP stopped
+    // and ip==0.0.0.0.  The PPP netif becomes the default route anyway.
     if (pppoe_enabled) {
         esp_netif_dhcpc_stop(ethNetif);
+        esp_netif_ip_info_t placeholder = {};
+        placeholder.ip.addr      = esp_ip4addr_aton("169.254.0.1");
+        placeholder.netmask.addr = esp_ip4addr_aton("255.255.255.255");
+        esp_netif_set_ip_info(ethNetif, &placeholder);
         ESP_LOGI(TAG, "PPPoE mode: DHCP disabled on Ethernet interface");
     }
 
@@ -1385,9 +1398,6 @@ void app_main(void)
 
     // Initialize syslog client (UDP forwarding, disabled by default)
     syslog_init();
-
-    // Initialize OLED display (ESP32-S3 defaults to enabled on GPIO17/18)
-    oled_display_init();
 
     initialize_console();
 

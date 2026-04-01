@@ -42,7 +42,6 @@
 #include "acl.h"
 #include "remote_console.h"
 #include "syslog_client.h"
-#include "oled_display.h"
 #include "esp_ota_ops.h"
 #include "esp_app_desc.h"
 
@@ -88,10 +87,6 @@ static void register_set_rf_switch(void);
 static void register_acl(void);
 static void register_remote_console_cmd(void);
 static void register_syslog_cmd(void);
-#if defined(CONFIG_IDF_TARGET_ESP32C3) || defined(CONFIG_IDF_TARGET_ESP32S3)
-static void register_set_oled(void);
-static void register_set_oled_gpio(void);
-#endif
 #if !CONFIG_ETH_UPLINK
 static void register_scan(void);
 #endif
@@ -317,10 +312,6 @@ void register_router(void)
     register_syslog_cmd();
     register_set_tz();
     register_set_pppoe();
-#if defined(CONFIG_IDF_TARGET_ESP32C3) || defined(CONFIG_IDF_TARGET_ESP32S3)
-    register_set_oled();
-    register_set_oled_gpio();
-#endif
 }
 
 #if !CONFIG_ETH_UPLINK
@@ -1241,11 +1232,7 @@ static int show(int argc, char **argv)
 
         // Connection status
 #if CONFIG_ETH_UPLINK
-        if (ap_connect) {
-            printf("Ethernet:   connected\n");
-        } else {
-            printf("Ethernet:   not connected\n");
-        }
+        printf("Ethernet:   %s\n", eth_link_up ? "link up" : "link down");
         if (pppoe_enabled) {
             if (pppoe_is_connected()) {
                 ip4_addr_t ppp_addr;
@@ -3052,98 +3039,6 @@ static void register_set_tz(void)
     };
     ESP_ERROR_CHECK( esp_console_cmd_register(&cmd) );
 }
-
-#if defined(CONFIG_IDF_TARGET_ESP32C3) || defined(CONFIG_IDF_TARGET_ESP32S3)
-
-/* 'set_oled' command - enable/disable OLED display */
-static int set_oled_cmd(int argc, char **argv)
-{
-    if (argc < 2) {
-        bool enabled;
-        int sda, scl;
-        oled_display_get_config(&enabled, &sda, &scl);
-        printf("OLED display: %s\n", enabled ? "enabled" : "disabled");
-        printf("I2C GPIOs: SDA=%d, SCL=%d\n", sda, scl);
-        printf("\nUsage: set_oled <enable|disable>\n");
-        return 0;
-    }
-
-    const char *action = argv[1];
-    if (strcmp(action, "enable") == 0) {
-        oled_display_enable();
-        printf("OLED display will be enabled after reboot.\n");
-    } else if (strcmp(action, "disable") == 0) {
-        oled_display_disable();
-        printf("OLED display will be disabled after reboot.\n");
-    } else {
-        printf("Unknown action: %s\n", action);
-        printf("Usage: set_oled <enable|disable>\n");
-        return 1;
-    }
-
-    return 0;
-}
-
-static void register_set_oled(void)
-{
-    const esp_console_cmd_t cmd = {
-        .command = "set_oled",
-        .help = "Enable or disable OLED display\n"
-                "  set_oled              - Show current status\n"
-                "  set_oled enable       - Enable OLED display (after reboot)\n"
-                "  set_oled disable      - Disable OLED display (after reboot)",
-        .hint = " <enable|disable>",
-        .func = &set_oled_cmd,
-    };
-    ESP_ERROR_CHECK( esp_console_cmd_register(&cmd) );
-}
-
-/* 'set_oled_gpio' command - configure I2C pins for OLED */
-static int set_oled_gpio_cmd(int argc, char **argv)
-{
-    if (argc < 3) {
-        bool enabled;
-        int sda, scl;
-        oled_display_get_config(&enabled, &sda, &scl);
-        printf("Current OLED I2C GPIOs: SDA=%d, SCL=%d\n", sda, scl);
-        printf("\nUsage: set_oled_gpio <sda> <scl>\n");
-        return 0;
-    }
-
-    char *endptr;
-    int sda = strtol(argv[1], &endptr, 10);
-    if (*endptr != '\0' || sda < 0 || sda > 48) {
-        printf("Invalid SDA GPIO. Use 0-48.\n");
-        return 1;
-    }
-    int scl = strtol(argv[2], &endptr, 10);
-    if (*endptr != '\0' || scl < 0 || scl > 48) {
-        printf("Invalid SCL GPIO. Use 0-48.\n");
-        return 1;
-    }
-    if (sda == scl) {
-        printf("SDA and SCL must be different GPIOs.\n");
-        return 1;
-    }
-
-    oled_display_set_gpio(sda, scl);
-    printf("OLED I2C GPIOs set to SDA=%d, SCL=%d.\n", sda, scl);
-    printf("Restart the device for changes to take effect.\n");
-    return 0;
-}
-
-static void register_set_oled_gpio(void)
-{
-    const esp_console_cmd_t cmd = {
-        .command = "set_oled_gpio",
-        .help = "Set I2C GPIO pins for OLED display (requires restart)",
-        .hint = " <sda> <scl>",
-        .func = &set_oled_gpio_cmd,
-    };
-    ESP_ERROR_CHECK( esp_console_cmd_register(&cmd) );
-}
-
-#endif /* CONFIG_IDF_TARGET_ESP32C3 || CONFIG_IDF_TARGET_ESP32S3 */
 
 #if !CONFIG_ETH_UPLINK
 /* Helper function to convert auth mode to string */

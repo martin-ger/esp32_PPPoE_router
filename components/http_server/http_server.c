@@ -868,10 +868,10 @@ static esp_err_t index_get_handler(httpd_req_t *req)
 
     /* Stream Uplink row */
 #if CONFIG_ETH_UPLINK
-    if (ap_connect) {
-        httpd_resp_send_chunk(req, "<tr><td>Ethernet:</td><td style='color:#4caf50;'>Connected</td></tr>", HTTPD_RESP_USE_STRLEN);
+    if (eth_link_up) {
+        httpd_resp_send_chunk(req, "<tr><td>Ethernet:</td><td style='color:#4caf50;'>Link up</td></tr>", HTTPD_RESP_USE_STRLEN);
     } else {
-        httpd_resp_send_chunk(req, "<tr><td>Ethernet:</td><td><strong style='color:#f44336;'>Disconnected</strong></td></tr>", HTTPD_RESP_USE_STRLEN);
+        httpd_resp_send_chunk(req, "<tr><td>Ethernet:</td><td><strong style='color:#f44336;'>Link down</strong></td></tr>", HTTPD_RESP_USE_STRLEN);
     }
 #else
     if (ap_connect) {

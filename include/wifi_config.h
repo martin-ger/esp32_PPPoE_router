@@ -45,6 +45,9 @@ extern char* hostname;
 extern uint16_t connect_count;
 extern bool ap_connect;
 extern bool wifi_scan_active;
+#if CONFIG_ETH_UPLINK
+extern bool eth_link_up;   /* true when Ethernet physical link is up */
+#endif
 
 extern uint32_t my_ip;
 extern uint32_t my_ap_ip;
