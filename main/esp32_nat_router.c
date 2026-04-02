@@ -1387,6 +1387,9 @@ void app_main(void)
         get_config_param_int("web_port", &web_port_setting);
         ESP_LOGI(TAG,"Starting web server on port %d", web_port_setting);
         start_webserver((uint16_t)web_port_setting);
+        int wa = 0;
+        get_config_param_int("wan_access", &wa);
+        update_web_wan_acl(wa);
     }
     free(web_disabled);
 

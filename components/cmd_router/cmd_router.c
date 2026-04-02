@@ -193,7 +193,7 @@ esp_err_t get_config_param_int(char* name, int* param)
     esp_err_t err = nvs_open(PARAM_NAMESPACE, NVS_READONLY, &nvs);
     if (err == ESP_OK) {
         if ( (err = nvs_get_i32(nvs, name, (int32_t*)(param))) == ESP_OK) {
-            ESP_LOGI(TAG, "%s %d", name, *param);
+            //ESP_LOGI(TAG, "%s %d", name, *param);
         } else {
             return err;
         }
@@ -238,10 +238,60 @@ esp_err_t set_config_param_str(const char* name, const char* value)
     nvs_handle_t nvs;
     esp_err_t err = nvs_open(PARAM_NAMESPACE, NVS_READWRITE, &nvs);
     if (err != ESP_OK) return err;
+    ESP_LOGI(TAG, "Set config: %s %s", name, value);
     err = nvs_set_str(nvs, name, value);
     if (err == ESP_OK) err = nvs_commit(nvs);
     nvs_close(nvs);
     return err;
+}
+
+void update_web_wan_acl(int wan_access)
+{
+    int web_port = 80;
+    get_config_param_int("web_port", &web_port);
+
+    if (!wan_access) {
+        /* Install block rule if not already present.
+         * Search fresh — acl_delete compacts the list so stored indices go stale. */
+        acl_lock();
+        acl_entry_t *rules = acl_get_rules(ACL_TO_ESP);
+        bool found = false;
+        for (int i = 0; i < MAX_ACL_ENTRIES; i++) {
+            if (rules[i].valid && rules[i].proto == ACL_PROTO_TCP &&
+                rules[i].d_port == (uint16_t)web_port && rules[i].allow == ACL_DENY &&
+                rules[i].src == 0 && rules[i].dest == 0) {
+                found = true;
+                break;
+            }
+        }
+        acl_unlock();
+        if (!found) {
+            bool ok = acl_add(ACL_TO_ESP, 0, 0, 0, 0, ACL_PROTO_TCP, 0, (uint16_t)web_port, ACL_DENY);
+            if (ok) {
+                ESP_LOGI(TAG, "WAN block rule installed for web port %d", web_port);
+            } else {
+                ESP_LOGW(TAG, "Could not install WAN block rule for web port %d (ACL full?)", web_port);
+            }
+        }
+    } else {
+        /* Find and remove rule — search fresh each time */
+        acl_lock();
+        acl_entry_t *rules = acl_get_rules(ACL_TO_ESP);
+        int slot = -1;
+        for (int i = 0; i < MAX_ACL_ENTRIES; i++) {
+            if (rules[i].valid && rules[i].proto == ACL_PROTO_TCP &&
+                rules[i].d_port == (uint16_t)web_port && rules[i].allow == ACL_DENY &&
+                rules[i].src == 0 && rules[i].dest == 0) {
+                slot = i;
+                break;
+            }
+        }
+        acl_unlock();
+        if (slot >= 0) {
+            acl_delete(ACL_TO_ESP, (uint8_t)slot);
+            ESP_LOGI(TAG, "WAN block rule removed for web port %d", web_port);
+        }
+    }
 }
 
 esp_err_t set_config_param_int(const char* name, int32_t value)
@@ -249,6 +299,7 @@ esp_err_t set_config_param_int(const char* name, int32_t value)
     nvs_handle_t nvs;
     esp_err_t err = nvs_open(PARAM_NAMESPACE, NVS_READWRITE, &nvs);
     if (err != ESP_OK) return err;
+    ESP_LOGI(TAG, "Set config: %s %d", name, value);
     err = nvs_set_i32(nvs, name, value);
     if (err == ESP_OK) err = nvs_commit(nvs);
     nvs_close(nvs);
@@ -911,11 +962,18 @@ static int web_ui_cmd(int argc, char **argv)
             printf("Usage: web_ui wan_access <on|off>\n");
             return 0;
         }
-        int val = (strcmp(argv[2], "on") == 0) ? 1 : 0;
+        int val = (strcmp(argv[2], "on") == 0 || strcmp(argv[2], "enable") == 0 || strcmp(argv[2], "1") == 0) ? 1 : 0;
+        if (val && !is_web_password_set()) {
+            printf("Error: cannot enable WAN access without a router password.\n");
+            printf("Set a password first: set_router_password <password>\n");
+            return 1;
+        }
         err = set_config_param_int("wan_access", val);
         if (err == ESP_OK) {
             printf("Web interface access from WAN: %s (effective immediately).\n",
                    val ? "enabled" : "disabled");
+            ESP_LOGW(TAG, "Interface access from WAN %s.", val ? "enabled" : "disabled");
+            update_web_wan_acl(val);
         }
     } else {
         printf("Unknown action: %s\n", action);
@@ -935,7 +993,7 @@ static void register_web_ui(void)
                 "  web_ui enable                   - Enable web interface (after reboot)\n"
                 "  web_ui disable                  - Disable web interface (after reboot)\n"
                 "  web_ui port <port>              - Set web server port (after reboot)\n"
-                "  web_ui wan_access <on|off> - Allow/deny access from WAN side",
+                "  web_ui wan_access <on|off>      - Allow/deny access from WAN side (on/enable/1 or off/disable/0)",
         .hint = " <enable|disable|port|wan_access>",
         .func = &web_ui_cmd,
     };
@@ -1069,6 +1127,13 @@ static int set_router_password_cmd(int argc, char **argv)
         if (argv[1][0] == '\0') {
             ESP_LOGW(TAG, "Web password protection disabled via CLI.");
             printf("Password protection disabled.\n");
+            int wan_access = 0;
+            get_config_param_int("wan_access", &wan_access);
+            if (wan_access) {
+                set_config_param_int("wan_access", 0);
+                printf("WAN access disabled (requires a password to be set).\n");
+                update_web_wan_acl(0);
+            }
         } else {
             ESP_LOGW(TAG, "Web password changed via CLI.");
             printf("Password updated successfully.\n");
@@ -1287,6 +1352,13 @@ static int show(int argc, char **argv)
         // AP interface state
         printf("AP interface: %s\n", ap_disabled ? "disabled" : "enabled");
 
+        // Access warning
+        int wan_access = 0;
+        get_config_param_int("wan_access", &wan_access);
+        if (wan_access) {
+            printf("\nWARNING: WAN access is enabled - management interfaces reachable from internet!\n");
+        }
+
         // Connected clients
         resync_connect_count();
         printf("Connected clients: %u\n", connect_count);
@@ -1435,9 +1507,13 @@ static int show(int argc, char **argv)
         printf("\nWeb Interface: %s (port %d)\n", web_enabled ? "enabled" : "disabled", web_port);
         if (web_lock != NULL) free(web_lock);
 
+        int wan_access = 0;
+        get_config_param_int("wan_access", &wan_access);
+        printf("  WAN access is %s\n", wan_access ? "ENABLED!" : "disabled");
+
         int8_t tx_power = 0;
         if (esp_wifi_get_max_tx_power(&tx_power) == ESP_OK) {
-            printf("TX Power: %.1f dBm\n", tx_power * 0.25);
+            printf("\nTX Power: %.1f dBm\n", tx_power * 0.25);
         }
 
         // Cleanup
@@ -1765,7 +1841,7 @@ static int pcap(int argc, char **argv)
         printf("  mode [off|acl|promisc] - Get or set capture mode\n");
         printf("    off      - Capture disabled\n");
         printf("    acl      - Capture ACL_MONITOR flagged packets (any interface)\n");
-        printf("    promisc  - Capture all AP client traffic (not STA)\n");
+        printf("    promisc  - Capture all Ethernet traffic (not AP clients)\n");
         printf("  status     - Show capture status\n");
         printf("  snaplen [n]- Get or set max capture bytes (64-1600)\n");
         printf("  start      - Legacy: enable promiscuous mode\n");
@@ -1788,7 +1864,7 @@ static int pcap(int argc, char **argv)
             } else if (strcmp(mode_str, "promisc") == 0 || strcmp(mode_str, "promiscuous") == 0) {
                 pcap_set_mode(PCAP_MODE_PROMISCUOUS);
                 printf("Capture mode: promiscuous\n");
-                printf("All AP client traffic will be captured (STA excluded)\n");
+                printf("All Ethernet traffic will be captured (AP clients excluded)\n");
             } else {
                 printf("Invalid mode. Use: off, acl, or promisc\n");
                 return 1;

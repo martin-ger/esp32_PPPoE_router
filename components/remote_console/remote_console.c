@@ -707,11 +707,13 @@ static void remote_console_task(void *arg) {
         /* Set socket options */
         setsockopt(rc_state.server_socket, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
 
-        /* Bind to port */
+        /* Bind to port — on AP interface only unless wan_access is enabled */
+        int wan_access = 0;
+        get_config_param_int("wan_access", &wan_access);
         memset(&server_addr, 0, sizeof(server_addr));
         server_addr.sin_family = AF_INET;
         server_addr.sin_port = htons(rc_config.port);
-        server_addr.sin_addr.s_addr = htonl(INADDR_ANY);  /* Filtered per-connection by rc_config.bind */
+        server_addr.sin_addr.s_addr = wan_access ? htonl(INADDR_ANY) : my_ap_ip;
 
         if (bind(rc_state.server_socket, (struct sockaddr *)&server_addr, sizeof(server_addr)) < 0) {
             ESP_LOGE(TAG, "Failed to bind to port %d: %d", rc_config.port, errno);
@@ -753,18 +755,14 @@ static void remote_console_task(void *arg) {
             /* Get client IP */
             inet_ntop(AF_INET, &client_addr.sin_addr, rc_state.client_ip, sizeof(rc_state.client_ip));
 
-            /* Reject WAN-side connections unless wan_access is enabled */
+            /* Reject WAN-side connections if wan_access is currently disabled */
             {
                 int wan_access = 0;
                 get_config_param_int("wan_access", &wan_access);
                 if (!wan_access) {
-                    struct sockaddr_in local_addr;
-                    socklen_t addr_len = sizeof(local_addr);
-                    getsockname(rc_state.client_socket, (struct sockaddr *)&local_addr, &addr_len);
-                    uint32_t local_ip = local_addr.sin_addr.s_addr;
-
-                    if (local_ip != my_ap_ip) {
-                        ESP_LOGW(TAG, "Connection from %s rejected (WAN access disabled)", rc_state.client_ip);
+                    uint32_t cip = client_addr.sin_addr.s_addr;
+                    if ((cip & 0x00FFFFFF) != (my_ap_ip & 0x00FFFFFF)) {
+                        ESP_LOGW(TAG, "Rejected WAN connection from %s (wan_access disabled)", rc_state.client_ip);
                         close(rc_state.client_socket);
                         rc_state.client_socket = -1;
                         continue;

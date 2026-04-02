@@ -52,6 +52,11 @@ extern bool eth_link_up;   /* true when Ethernet physical link is up */
 extern uint32_t my_ip;
 extern uint32_t my_ap_ip;
 
+/* Install or remove the WAN-side ACL block rule for the web server port.
+ * wan_access=0: installs DENY rule; wan_access!=0: removes it.
+ * Call after any wan_access state change. */
+void update_web_wan_acl(int wan_access);
+
 // AP SSID hidden (0 = visible, 1 = hidden)
 extern uint8_t ap_ssid_hidden;
 

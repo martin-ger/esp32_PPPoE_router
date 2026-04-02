@@ -37,6 +37,7 @@
 #include "pages.h"
 #include "favicon_png.h"
 #include "router_globals.h"
+#include "wifi_config.h"
 #include "pcap_capture.h"
 #include "acl.h"
 #include "remote_console.h"
@@ -46,6 +47,7 @@
 #include "esp_app_desc.h"
 
 static const char *TAG = "HTTPServer";
+
 
 /* Get client IP address string from HTTP request */
 static const char *get_client_ip(httpd_req_t *req, char *buf, size_t buf_len)
@@ -200,6 +202,22 @@ static bool get_cookie_value(httpd_req_t *req, const char* cookie_name,
 }
 
 /* Check if request has valid session cookie */
+/* CSRF check: if the browser sends an Origin header it must match our AP IP.
+ * Requests without Origin (curl, API clients) are allowed through.
+ * Returns true if the request is safe to process. */
+static bool check_csrf(httpd_req_t *req)
+{
+    char origin[64];
+    if (httpd_req_get_hdr_value_str(req, "Origin", origin, sizeof(origin)) != ESP_OK) {
+        return true;  /* No Origin — non-browser or same-origin fetch, allow */
+    }
+    char expected[32];
+    ip4_addr_t ap;
+    ap.addr = my_ap_ip;
+    snprintf(expected, sizeof(expected), "http://" IPSTR, IP2STR(&ap));
+    return (strncmp(origin, expected, strlen(expected)) == 0);
+}
+
 static bool is_authenticated(httpd_req_t *req)
 {
     // If no session is active, not authenticated
@@ -485,6 +503,11 @@ static esp_err_t config_export_handler(httpd_req_t *req)
 
 static esp_err_t config_import_handler(httpd_req_t *req)
 {
+    if (!check_csrf(req)) {
+        { char _ip[16]; ESP_LOGW(TAG, "CSRF rejected /api/config-import from %s", get_client_ip(req, _ip, sizeof(_ip))); }
+        httpd_resp_send_err(req, HTTPD_403_FORBIDDEN, "CSRF check failed");
+        return ESP_FAIL;
+    }
     bool password_protection_enabled = is_web_password_set();
     if (password_protection_enabled && !is_authenticated(req)) {
         { char _ip[16]; ESP_LOGW(TAG, "Unauthenticated access to /api/config-import from %s", get_client_ip(req, _ip, sizeof(_ip))); }
@@ -547,6 +570,11 @@ static httpd_uri_t config_importp = {
 
 static esp_err_t ota_upload_handler(httpd_req_t *req)
 {
+    if (!check_csrf(req)) {
+        { char _ip[16]; ESP_LOGW(TAG, "CSRF rejected /api/ota-upload from %s", get_client_ip(req, _ip, sizeof(_ip))); }
+        httpd_resp_send_err(req, HTTPD_403_FORBIDDEN, "CSRF check failed");
+        return ESP_FAIL;
+    }
     bool password_protection_enabled = is_web_password_set();
     if (password_protection_enabled && !is_authenticated(req)) {
         { char _ip[16]; ESP_LOGW(TAG, "Unauthenticated access to /api/ota-upload from %s", get_client_ip(req, _ip, sizeof(_ip))); }
@@ -791,11 +819,24 @@ static esp_err_t index_get_handler(httpd_req_t *req)
                 preprocess_string(param);
                 preprocess_string(param2);
 
+                if (!check_csrf(req)) {
+                    strcpy(login_message, "ERROR: CSRF check failed.");
+                }
                 // Check if user is authenticated or no password is currently set
-                if (is_authenticated(req) || !password_protection_enabled) {
+                else if (is_authenticated(req) || !password_protection_enabled) {
                     if (strcmp(param, param2) == 0) {
                         esp_err_t err = set_web_password_hashed(param);
                         if (err == ESP_OK) {
+                            if (param[0] == '\0') {
+                                /* Password cleared — revoke WAN access */
+                                int wan_access = 0;
+                                get_config_param_int("wan_access", &wan_access);
+                                if (wan_access) {
+                                    set_config_param_int("wan_access", 0);
+                                    ESP_LOGW(TAG, "WAN access disabled: password protection removed");
+                                    update_web_wan_acl(0);
+                                }
+                            }
                             clear_session();  // Force re-login with new password
                             free(buf);
                             /* Redirect to reload page */
@@ -946,6 +987,19 @@ static esp_err_t index_get_handler(httpd_req_t *req)
     format_boot_time(boot_time_str, sizeof(boot_time_str));
     snprintf(row, sizeof(row), "<tr><td>Uptime:</td><td>%s (since %s)</td></tr>", uptime_str, boot_time_str);
     httpd_resp_send_chunk(req, row, HTTPD_RESP_USE_STRLEN);
+
+    /* WAN access warning */
+    {
+        int wan_access = 0;
+        get_config_param_int("wan_access", &wan_access);
+        if (wan_access) {
+            httpd_resp_send_chunk(req,
+                "<tr><td colspan='2' style='color:#f44336;font-weight:bold;'>"
+                "&#9888; WAN access is enabled &mdash; management interfaces are reachable from the internet."
+                "</td></tr>",
+                HTTPD_RESP_USE_STRLEN);
+        }
+    }
 
     /* Close status table */
     httpd_resp_send_chunk(req, INDEX_CHUNK_STATUS_CLOSE, HTTPD_RESP_USE_STRLEN);

@@ -19,11 +19,11 @@
 
 #include "pcap_capture.h"
 #include "pcap_ringbuf.h"
+#include "wifi_config.h"
 
 static const char *TAG = "pcap_capture";
 
 // Configuration
-#define PCAP_TCP_PORT           19000
 #define PCAP_TASK_STACK         3072
 #define PCAP_TASK_PRIORITY      5
 #if CONFIG_IDF_TARGET_ESP32C3 || CONFIG_IDF_TARGET_ESP32C5
@@ -116,10 +116,10 @@ static void pcap_server_task(void *arg)
     int opt = 1;
     setsockopt(listen_sock, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
 
-    // Bind to port
+    // Bind to AP interface only — PCAP port is never exposed on WAN
     memset(&server_addr, 0, sizeof(server_addr));
     server_addr.sin_family = AF_INET;
-    server_addr.sin_addr.s_addr = htonl(INADDR_ANY);
+    server_addr.sin_addr.s_addr = my_ap_ip;
     server_addr.sin_port = htons(PCAP_TCP_PORT);
 
     if (bind(listen_sock, (struct sockaddr *)&server_addr, sizeof(server_addr)) < 0) {
@@ -264,8 +264,8 @@ IRAM_ATTR bool pcap_should_capture(bool is_acl_monitored, bool is_ap_interface)
             // Capture ACL-monitored packets from any interface
             return is_acl_monitored;
         case PCAP_MODE_PROMISCUOUS:
-            // Capture all AP traffic, but not STA traffic
-            return is_ap_interface;
+            // Capture all Ethernet/upstream traffic, not AP client traffic
+            return !is_ap_interface;
     }
     return false;
 }

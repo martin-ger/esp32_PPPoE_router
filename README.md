@@ -197,7 +197,7 @@ Packets are streamed as a PCAP file over a TCP connection on port 19000. Open th
 |------|----------|
 | `off` | Capture disabled |
 | `acl` | Only packets matching an ACL rule with the `monitor` flag |
-| `promisc` | All traffic on the AP interface |
+| `promisc` | All traffic on the PPP/uplink interface |
 
 ```bash
 pcap mode <off|acl|promisc>                    # Set capture mode
@@ -318,6 +318,8 @@ Lists: `to_esp`, `from_esp`, `to_ap`, `from_ap` — Protocols: `IP`, `TCP`, `UDP
 | `web_ui disable` | Disable web interface (restart required) |
 | `web_ui port <port>` | Set HTTP port (restart required) |
 | `set_router_password <pass>` | Set web / console password (empty = disable) |
+| `web_ui wan_access enable` | Allows access to web interface and remote console from internet (wan port) |
+| `web_ui wan_access disable` | Disables all management access from internet (wan port) |
 
 ### Status and System
 

@@ -14,6 +14,8 @@
 extern "C" {
 #endif
 
+#define PCAP_TCP_PORT           19000
+
 /**
  * @brief Capture mode enumeration
  */
@@ -38,7 +40,7 @@ void pcap_init(void);
  * - Current capture mode (OFF, ACL_MONITOR, or PROMISCUOUS)
  * - Whether a Wireshark client is connected
  * - Whether packet has ACL_MONITOR flag (for ACL_MONITOR mode)
- * - Interface type (promiscuous mode only captures AP interface)
+ * - Interface type (promiscuous mode only captures Ethernet/upstream interface)
  *
  * @param is_acl_monitored true if packet matched ACL rule with MONITOR flag
  * @param is_ap_interface true if packet is from AP interface (client traffic)
