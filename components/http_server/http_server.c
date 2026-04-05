@@ -820,6 +820,7 @@ static esp_err_t index_get_handler(httpd_req_t *req)
                 preprocess_string(param2);
 
                 if (!check_csrf(req)) {
+                    { char _ip[16]; ESP_LOGW(TAG, "CSRF rejected password set from %s", get_client_ip(req, _ip, sizeof(_ip))); }
                     strcpy(login_message, "ERROR: CSRF check failed.");
                 }
                 // Check if user is authenticated or no password is currently set

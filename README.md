@@ -1,6 +1,6 @@
 # ESP32 PPPoE Router
 
-An ESP32-based NAT router with a wired Ethernet uplink that speaks PPPoE directly to a DSL/cable modem. Clients connect via WiFi (softAP). Includes a full web interface, firewall, DHCP reservations, port forwarding, and PCAP capture.
+An ESP32-based NAT WAN router for the **[WT32-ETH01](https://github.com/egnor/wt32-eth01)** board with a wired uplink. It can speak PPPoE directly to a WAN/DSL/cable modem, but it also supports DHCP for pure Ethernet uplink. Clients connect via WiFi (softAP). Includes a full web interface, firewall, DHCP reservations, port forwarding, and PCAP capture.
 
 ---
 
@@ -18,12 +18,12 @@ An ESP32-based NAT router with a wired Ethernet uplink that speaks PPPoE directl
 - Stateless packet firewall with four ACL lists and hit counters
 - DHCP server with IP reservations, client blocking, and static pool
 - Port forwarding (TCP / UDP) with device-name resolution
-- Per-client traffic statistics
 - PCAP packet capture streamed to Wireshark over TCP (port 19000)
-- Remote CLI console over TCP (port 2323, password-protected)
+- Remote CLI console over TCP (password-protected)
 - Remote syslog forwarding (UDP, RFC 3164)
 - OTA firmware update via web interface
 - Configuration import / export via web interface
+- Optional per-client traffic statistics
 - TTL override and TCP MSS clamping
 
 ---
@@ -207,7 +207,7 @@ pcap status                                    # Show current mode and stats
 
 ### Remote Console
 
-Network-accessible CLI on TCP port 2323. Requires the router password to be set before enabling.
+Network-accessible CLI on TCP (default port 2323). Requires the router password to be set before enabling.
 
 ```bash
 remote_console enable                          # Enable (requires password set)
@@ -362,6 +362,47 @@ Lists: `to_esp`, `from_esp`, `to_ap`, `from_ap` — Protocols: `IP`, `TCP`, `UDP
 
 ---
 
+## Security
+
+### Management Interface Exposure
+
+The web interface and remote console are accessible from the LAN (AP subnet) only by default. Any connection from outside the AP subnet is dropped at the TCP open callback. The same gate applies to both the web server and the remote console. The web server is additionally protected by an automatically inserted ACL rule, the remote console listens only an the AP interface. A connection is only allowed if:
+
+1. The `wan_access` flag is enabled (opt-in, disabled by default), **or**
+2. The client IP falls within the AP's /24 subnet.
+
+Enable WAN access only if the router's management port is not reachable from the internet (e.g., in a local environmet or behind another NAT).
+
+```bash
+web_ui wan_access on    # Allow management from WAN (takes effect immediately for web interface, console after reboot)
+web_ui wan_access off   # Restore LAN-only access immediately
+```
+
+### Authentication
+
+A single shared password protects the web interface and the remote console. With no password set, the managment interface would be fully open. In this case wan access is generally prohibited.
+
+**Password storage:** Passwords are stored in NVS as `salt_hex:hash_hex` — a 16-byte random salt followed by a SHA-256 hash of `salt || password`.
+
+**Web sessions:** After login, the server issues a 31-character random hex token (drawn from `esp_random()`) as a session cookie. Sessions expire after 30 minutes of inactivity; activity resets the timer. Only one session exists at a time. The cookie is set with `SameSite=Strict` but without `HttpOnly` or `Secure` (no TLS).
+
+**Remote console:** The console enforces a maximum of 3 failed login attempts per connection, after which the connection is dropped and a 5-second delay is imposed before reconnection. Failed attempts are logged and counted in `remote_console status`.
+
+### Transport Security
+
+Neither the web interface (HTTP) nor the remote console (plain TCP) are encrypted. Passwords and session tokens are transmitted in cleartext on the wire. This is acceptable on a trusted local WiFi network but means:
+
+- The web session cookie and any passwords entered via the browser are visible to anyone with network access.
+- The remote console password is visible in the TCP stream.
+
+### Firewall
+
+The stateless ACL firewall provides packet-level filtering across four traffic directions. No rules are installed by default — all traffic is allowed unless rules are explicitly added. 
+
+See the [Firewall](#firewall) section for full rule syntax.
+
+---
+
 ## Building
 
 Prerequisites: ESP-IDF v5.5 or later with the `xtensa-esp32-elf` toolchain.
@@ -388,13 +429,13 @@ On first boot the router starts with default settings:
 
 | Setting | Default |
 |---------|---------|
-| AP SSID | `ESP32_NAT_Router` |
+| AP SSID | `ESP32_PPPoE_Router` |
 | AP password | open |
 | AP IP | `192.168.4.1` |
 | Web interface | `http://192.168.4.1` |
 | PPPoE | disabled |
 
-Connect to the AP, open `http://192.168.4.1`, and configure the PPPoE credentials and any other settings. Changes take effect after a restart (use the **Restart** button in the web interface or `restart` from the CLI).
+Connect to the AP, open `http://192.168.4.1` (should be automated by captive portal), and configure the password, the PPPoE credentials and any other settings. Changes take effect after a restart (use the **Restart** button in the web interface or `restart` from the CLI).
 
 To erase all settings and return to factory defaults:
 
