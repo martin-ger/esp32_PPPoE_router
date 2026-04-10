@@ -399,10 +399,6 @@ Neither the web interface (HTTP) nor the remote console (plain TCP) are encrypte
 
 The stateless ACL firewall provides packet-level filtering across four traffic directions. No rules are installed by default — all traffic is allowed unless rules are explicitly added. 
 
-See the [Firewall](#firewall) section for full rule syntax.
-
----
-
 ## Building
 
 Prerequisites: ESP-IDF v5.5 or later with the `xtensa-esp32-elf` toolchain.
