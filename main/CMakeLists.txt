@@ -1,13 +1,14 @@
 set(main_priv_requires
     pcap_capture esp_wifi esp_netif console nvs_flash driver esp_http_server
     fatfs cmd_router dhcpserver wpa_supplicant cmd_system acl remote_console
-    syslog json esp_eth http_server mqtt_ha app_update)
+    syslog json esp_eth http_server mqtt_ha app_update esp_wireguard)
 
 idf_component_register(SRCS "esp32_nat_router.c"
                             "portmap.c"
                             "dhcp_manager.c"
                             "pppoe_manager.c"
                             "netif_hooks.c"
+                            "vpn_manager.c"
                     INCLUDE_DIRS "."
                     PRIV_REQUIRES ${main_priv_requires})
 

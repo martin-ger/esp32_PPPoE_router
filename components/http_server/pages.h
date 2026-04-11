@@ -5,5 +5,6 @@
 #include "pages/page_mappings.h"
 #include "pages/page_firewall.h"
 #include "pages/page_pppoe.h"
+#include "pages/page_vpn.h"
 #include "pages/page_setup.h"
 #include "pages/page_scan.h"

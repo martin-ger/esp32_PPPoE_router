@@ -3072,6 +3072,209 @@ static httpd_uri_t pppoep = {
     .handler   = pppoe_get_handler,
 };
 
+/* ------------------------------------------------------------------ */
+/*  /vpn — WireGuard VPN configuration                                 */
+/* ------------------------------------------------------------------ */
+
+static esp_err_t vpn_get_handler(httpd_req_t *req)
+{
+    resume_sta_if_scan_idle();
+    bool password_protection_enabled = is_web_password_set();
+
+    if (password_protection_enabled && !is_authenticated(req)) {
+        { char _ip[16]; ESP_LOGW(TAG, "Unauthenticated access to /vpn from %s", get_client_ip(req, _ip, sizeof(_ip))); }
+        httpd_resp_set_status(req, "303 See Other");
+        httpd_resp_set_hdr(req, "Location", "/?auth_required=1");
+        httpd_resp_send(req, NULL, 0);
+        return ESP_OK;
+    }
+
+    char* buf = NULL;
+    size_t buf_len;
+
+    buf_len = httpd_req_get_url_query_len(req) + 1;
+    if (buf_len > 1) {
+        buf = malloc(buf_len);
+        if (buf != NULL && httpd_req_get_url_query_str(req, buf, buf_len) == ESP_OK) {
+            ESP_LOGI(TAG, "VPN query => %s", buf);
+
+            char param[128];
+            bool has_config = false;
+
+            if (httpd_query_key_value(buf, "vpn_enabled", param, sizeof(param)) == ESP_OK) {
+                has_config = true;
+                nvs_handle_t nvs;
+                if (nvs_open(PARAM_NAMESPACE, NVS_READWRITE, &nvs) == ESP_OK) {
+                    nvs_set_i32(nvs, "vpn_enabled", atoi(param));
+
+                    if (httpd_query_key_value(buf, "vpn_privkey", param, sizeof(param)) == ESP_OK) {
+                        preprocess_string(param);
+                        nvs_set_str(nvs, "vpn_privkey", param);
+                    }
+                    if (httpd_query_key_value(buf, "vpn_pubkey", param, sizeof(param)) == ESP_OK) {
+                        preprocess_string(param);
+                        nvs_set_str(nvs, "vpn_pubkey", param);
+                    }
+                    if (httpd_query_key_value(buf, "vpn_psk", param, sizeof(param)) == ESP_OK) {
+                        preprocess_string(param);
+                        nvs_set_str(nvs, "vpn_psk", param);
+                    }
+                    if (httpd_query_key_value(buf, "vpn_endpoint", param, sizeof(param)) == ESP_OK) {
+                        preprocess_string(param);
+                        nvs_set_str(nvs, "vpn_endpoint", param);
+                    }
+                    if (httpd_query_key_value(buf, "vpn_port", param, sizeof(param)) == ESP_OK) {
+                        nvs_set_i32(nvs, "vpn_port", atoi(param));
+                    }
+                    if (httpd_query_key_value(buf, "vpn_ip", param, sizeof(param)) == ESP_OK) {
+                        preprocess_string(param);
+                        nvs_set_str(nvs, "vpn_ip", param);
+                    }
+                    if (httpd_query_key_value(buf, "vpn_mask", param, sizeof(param)) == ESP_OK) {
+                        preprocess_string(param);
+                        nvs_set_str(nvs, "vpn_mask", param);
+                    }
+                    if (httpd_query_key_value(buf, "vpn_ka", param, sizeof(param)) == ESP_OK) {
+                        nvs_set_i32(nvs, "vpn_ka", atoi(param));
+                    }
+                    if (httpd_query_key_value(buf, "vpn_ks", param, sizeof(param)) == ESP_OK) {
+                        nvs_set_i32(nvs, "vpn_ks", atoi(param));
+                    }
+                    if (httpd_query_key_value(buf, "vpn_rall", param, sizeof(param)) == ESP_OK) {
+                        nvs_set_i32(nvs, "vpn_rall", atoi(param));
+                    }
+
+                    nvs_commit(nvs);
+                    nvs_close(nvs);
+                    ESP_LOGI(TAG, "VPN settings saved, scheduling restart");
+                    esp_timer_start_once(restart_timer, 500000);
+                }
+            }
+            (void)has_config;
+        }
+        if (buf) free(buf);
+    }
+
+    #define VPN_BUF_SIZE 768
+    char *row = malloc(VPN_BUF_SIZE);
+    if (row == NULL) {
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Out of memory");
+        return ESP_ERR_NO_MEM;
+    }
+
+    httpd_resp_send_chunk(req, VPN_CHUNK_HEAD, HTTPD_RESP_USE_STRLEN);
+
+    if (session_active && password_protection_enabled) {
+        httpd_resp_send_chunk(req,
+            "<a href='/?logout=1' style='padding: 0.4rem 1rem; background: rgba(255,82,82,0.15); color: #ff5252; border: 1px solid #ff5252; border-radius: 6px; text-decoration: none; font-size: 0.85rem; font-weight: 500;'>Logout</a>",
+            HTTPD_RESP_USE_STRLEN);
+    }
+
+    httpd_resp_send_chunk(req, VPN_CHUNK_MID, HTTPD_RESP_USE_STRLEN);
+
+    /* Status section */
+    httpd_resp_send_chunk(req, "<h2>Status</h2><div class='status-table'><table>", HTTPD_RESP_USE_STRLEN);
+
+    if (vpn_enabled) {
+        const char *state, *color;
+        if (vpn_is_connected()) {
+            state = "Connected"; color = "#4caf50";
+        } else if (vpn_connected) {
+            state = "Handshake Pending"; color = "#ffc107";
+        } else {
+            state = "Disconnected"; color = "#f44336";
+        }
+        snprintf(row, VPN_BUF_SIZE, "<tr><td>VPN:</td><td><strong style='color:%s;'>%s</strong></td></tr>", color, state);
+    } else {
+        snprintf(row, VPN_BUF_SIZE, "<tr><td>VPN:</td><td><strong style='color:#888;'>Disabled</strong></td></tr>");
+    }
+    httpd_resp_send_chunk(req, row, HTTPD_RESP_USE_STRLEN);
+
+    if (vpn_address && vpn_address[0]) {
+        snprintf(row, VPN_BUF_SIZE, "<tr><td>Tunnel IP:</td><td>%s</td></tr>", vpn_address);
+        httpd_resp_send_chunk(req, row, HTTPD_RESP_USE_STRLEN);
+    }
+    snprintf(row, VPN_BUF_SIZE, "<tr><td>MSS Clamp:</td><td>%u</td></tr><tr><td>Path MTU:</td><td>%u</td></tr>",
+             ap_mss_clamp, ap_pmtu);
+    httpd_resp_send_chunk(req, row, HTTPD_RESP_USE_STRLEN);
+
+    snprintf(row, VPN_BUF_SIZE, "<tr><td>Kill Switch:</td><td><strong style='color:%s;'>%s</strong></td></tr>",
+             vpn_killswitch ? "#4caf50" : "#888", vpn_killswitch ? "On" : "Off");
+    httpd_resp_send_chunk(req, row, HTTPD_RESP_USE_STRLEN);
+
+    snprintf(row, VPN_BUF_SIZE, "<tr><td>Route All:</td><td><strong style='color:%s;'>%s</strong></td></tr>",
+             vpn_route_all ? "#4caf50" : "#2196f3", vpn_route_all ? "Yes" : "No (split tunnel)");
+    httpd_resp_send_chunk(req, row, HTTPD_RESP_USE_STRLEN);
+
+    httpd_resp_send_chunk(req, "</table></div>", HTTPD_RESP_USE_STRLEN);
+
+    /* Config form */
+    httpd_resp_send_chunk(req, VPN_CHUNK_FORM_OPEN, HTTPD_RESP_USE_STRLEN);
+
+    snprintf(row, VPN_BUF_SIZE,
+        "<tr><td>Enabled</td><td><select name='vpn_enabled'>"
+        "<option value='1' %s>On</option><option value='0' %s>Off</option>"
+        "</select></td></tr>",
+        vpn_enabled ? "selected" : "", vpn_enabled ? "" : "selected");
+    httpd_resp_send_chunk(req, row, HTTPD_RESP_USE_STRLEN);
+
+    snprintf(row, VPN_BUF_SIZE,
+        "<tr><td>Private Key</td><td><input type='password' name='vpn_privkey' value='%s' placeholder='Base64 private key'/></td></tr>",
+        vpn_private_key ? vpn_private_key : "");
+    httpd_resp_send_chunk(req, row, HTTPD_RESP_USE_STRLEN);
+
+    snprintf(row, VPN_BUF_SIZE,
+        "<tr><td>Public Key</td><td><input type='text' name='vpn_pubkey' value='%s' placeholder='Peer base64 public key'/></td></tr>",
+        vpn_public_key ? vpn_public_key : "");
+    httpd_resp_send_chunk(req, row, HTTPD_RESP_USE_STRLEN);
+
+    snprintf(row, VPN_BUF_SIZE,
+        "<tr><td>Preshared Key</td><td><input type='password' name='vpn_psk' value='%s' placeholder='Optional'/></td></tr>",
+        vpn_preshared_key ? vpn_preshared_key : "");
+    httpd_resp_send_chunk(req, row, HTTPD_RESP_USE_STRLEN);
+
+    snprintf(row, VPN_BUF_SIZE,
+        "<tr><td>Endpoint</td><td><input type='text' name='vpn_endpoint' value='%s' placeholder='Host or IP'/></td></tr>"
+        "<tr><td>Port</td><td><input type='number' name='vpn_port' value='%d' min='1' max='65535'/></td></tr>"
+        "<tr><td>Tunnel IP</td><td><input type='text' name='vpn_ip' value='%s' placeholder='e.g. 10.0.0.2'/></td></tr>"
+        "<tr><td>Netmask</td><td><input type='text' name='vpn_mask' value='%s' placeholder='255.255.255.0'/></td></tr>"
+        "<tr><td>Keepalive (sec)</td><td><input type='number' name='vpn_ka' value='%d' min='0' max='65535'/></td></tr>",
+        vpn_endpoint ? vpn_endpoint : "",
+        (int)vpn_port,
+        vpn_address ? vpn_address : "",
+        vpn_netmask ? vpn_netmask : "255.255.255.0",
+        (int)vpn_keepalive);
+    httpd_resp_send_chunk(req, row, HTTPD_RESP_USE_STRLEN);
+
+    snprintf(row, VPN_BUF_SIZE,
+        "<tr><td>Kill Switch</td><td><select name='vpn_ks'>"
+        "<option value='1' %s>On</option><option value='0' %s>Off</option>"
+        "</select></td></tr>",
+        vpn_killswitch ? "selected" : "", vpn_killswitch ? "" : "selected");
+    httpd_resp_send_chunk(req, row, HTTPD_RESP_USE_STRLEN);
+
+    snprintf(row, VPN_BUF_SIZE,
+        "<tr><td>Route All</td><td><select name='vpn_rall'>"
+        "<option value='1' %s>Yes (all traffic)</option><option value='0' %s>No (split tunnel)</option>"
+        "</select></td></tr>",
+        vpn_route_all ? "selected" : "", vpn_route_all ? "" : "selected");
+    httpd_resp_send_chunk(req, row, HTTPD_RESP_USE_STRLEN);
+
+    httpd_resp_send_chunk(req, VPN_CHUNK_FORM_CLOSE, HTTPD_RESP_USE_STRLEN);
+
+    httpd_resp_send_chunk(req, NULL, 0);
+
+    free(row);
+    return ESP_OK;
+}
+#undef VPN_BUF_SIZE
+
+static httpd_uri_t vpnp = {
+    .uri       = "/vpn",
+    .method    = HTTP_GET,
+    .handler   = vpn_get_handler,
+};
+
 static esp_err_t captive_redirect_handler(httpd_req_t *req, httpd_err_code_t err);
 
 httpd_handle_t start_webserver(uint16_t port)
@@ -3080,7 +3283,7 @@ httpd_handle_t start_webserver(uint16_t port)
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
     config.server_port = port;
     config.stack_size = 16384;  // Large stack needed for mappings page with 3x 2KB HTML buffers
-    config.max_uri_handlers = 13;
+    config.max_uri_handlers = 14;
     config.max_uri_len = 1024;
     config.open_fn = http_open_fn;
 
@@ -3099,6 +3302,7 @@ httpd_handle_t start_webserver(uint16_t port)
         httpd_register_uri_handler(server, &scanp);
 #endif
         httpd_register_uri_handler(server, &pppoep);
+        httpd_register_uri_handler(server, &vpnp);
 #if !CONFIG_ETH_UPLINK
         httpd_register_uri_handler(server, &setupp);
 #endif

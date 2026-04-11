@@ -66,6 +66,7 @@
 #include "pcap_capture.h"
 #include "remote_console.h"
 #include "syslog_client.h"
+#include "vpn_config.h"
 #if CONFIG_MQTT_HOMEASSISTANT
 #include "mqtt_ha.h"
 #endif
@@ -107,6 +108,21 @@ int32_t disable_time_check = 0;  // 0=off, 1=on
 // STA band preference (0=auto, 1=2.4GHz, 2=5GHz)
 uint8_t sta_band = STA_BAND_AUTO;
 #endif
+
+// WireGuard VPN settings
+int32_t vpn_enabled = 0;
+int32_t vpn_port = 51820;
+int32_t vpn_keepalive = 0;
+char* vpn_private_key = NULL;
+char* vpn_public_key = NULL;
+char* vpn_preshared_key = NULL;
+char* vpn_endpoint = NULL;
+char* vpn_address = NULL;
+char* vpn_netmask = NULL;
+bool vpn_connected = false;
+uint32_t vpn_tunnel_ip = 0;
+int32_t vpn_killswitch = 1;
+int32_t vpn_route_all = 1;
 
 // PPPoE DSL uplink settings
 int32_t pppoe_enabled = 0;
@@ -1335,6 +1351,61 @@ void app_main(void)
         }
     }
 
+    // Load WireGuard VPN settings from NVS
+    int vpn_setting = 0;
+    if (get_config_param_int("vpn_enabled", &vpn_setting) == ESP_OK) {
+        vpn_enabled = (int32_t)vpn_setting;
+    }
+    get_config_param_str("vpn_privkey", &vpn_private_key);
+    if (vpn_private_key == NULL) vpn_private_key = param_set_default("");
+    get_config_param_str("vpn_pubkey", &vpn_public_key);
+    if (vpn_public_key == NULL) vpn_public_key = param_set_default("");
+    get_config_param_str("vpn_psk", &vpn_preshared_key);
+    if (vpn_preshared_key == NULL) vpn_preshared_key = param_set_default("");
+    get_config_param_str("vpn_endpoint", &vpn_endpoint);
+    if (vpn_endpoint == NULL) vpn_endpoint = param_set_default("");
+    int vpn_port_setting = 51820;
+    if (get_config_param_int("vpn_port", &vpn_port_setting) == ESP_OK) {
+        vpn_port = (int32_t)vpn_port_setting;
+    }
+    get_config_param_str("vpn_ip", &vpn_address);
+    if (vpn_address == NULL) vpn_address = param_set_default("");
+    get_config_param_str("vpn_mask", &vpn_netmask);
+    if (vpn_netmask == NULL) vpn_netmask = param_set_default("255.255.255.0");
+    int vpn_ka_setting = 0;
+    if (get_config_param_int("vpn_ka", &vpn_ka_setting) == ESP_OK) {
+        vpn_keepalive = (int32_t)vpn_ka_setting;
+    }
+    int vpn_ks_setting = 1;
+    if (get_config_param_int("vpn_ks", &vpn_ks_setting) == ESP_OK) {
+        vpn_killswitch = (int32_t)vpn_ks_setting;
+    }
+    int vpn_rall_setting = 1;
+    if (get_config_param_int("vpn_rall", &vpn_rall_setting) == ESP_OK) {
+        vpn_route_all = (int32_t)vpn_rall_setting;
+    }
+    // Cache VPN subnet for kill switch packet filtering
+    if (vpn_address && vpn_address[0]) {
+        ip_addr_t addr, mask;
+        if (ipaddr_aton(vpn_address, &addr) && ipaddr_aton(
+                (vpn_netmask && vpn_netmask[0]) ? vpn_netmask : "255.255.255.0", &mask)) {
+            vpn_set_subnet(ip_2_ip4(&addr)->addr & ip_2_ip4(&mask)->addr,
+                           ip_2_ip4(&mask)->addr);
+        }
+    }
+    // Pre-set MSS/PMTU when VPN is enabled (before PPPoE connects)
+    if (vpn_enabled && pppoe_enabled) {
+        if (pppoe_babyjumbo) {
+            ap_mss_clamp = 1380;
+            ap_pmtu = 1440;
+            ESP_LOGI(TAG, "VPN+PPPoE baby-jumbo enabled, MSS=1380 PMTU=1440 pre-set");
+        } else {
+            ap_mss_clamp = 1352;
+            ap_pmtu = 1432;
+            ESP_LOGI(TAG, "VPN+PPPoE enabled, MSS=1352 PMTU=1432 pre-set");
+        }
+    }
+
 #if !CONFIG_ETH_UPLINK
     /* Create one-shot timer for STA reconnect backoff */
     const esp_timer_create_args_t reconnect_timer_args = {
@@ -1363,6 +1434,12 @@ void app_main(void)
         } else {
             ESP_LOGW(TAG, "Failed to set TX power: %s", esp_err_to_name(ret));
         }
+    }
+
+    // Start VPN monitor task (waits for PPPoE to come up before connecting)
+    if (vpn_enabled) {
+        xTaskCreate(vpn_monitor_task, "vpn_monitor", 4096, NULL, 5, NULL);
+        ESP_LOGI(TAG, "VPN monitor task started");
     }
 
     pthread_t t1;

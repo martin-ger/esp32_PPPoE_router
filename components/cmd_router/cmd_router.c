@@ -94,6 +94,7 @@ static void register_scan(void);
 static void register_set_sta_band(void);
 #endif
 static void register_set_pppoe(void);
+static void register_set_vpn(void);
 static void register_set_tz(void);
 
 /* ACL helper functions (forward declarations) */
@@ -363,6 +364,7 @@ void register_router(void)
     register_syslog_cmd();
     register_set_tz();
     register_set_pppoe();
+    register_set_vpn();
 }
 
 #if !CONFIG_ETH_UPLINK
@@ -1578,6 +1580,35 @@ static int show(int argc, char **argv)
         }
         printf("MSS Clamp: %u\n", ap_mss_clamp);
         printf("Path MTU: %u\n", ap_pmtu);
+
+    } else if (strcmp(type, "vpn") == 0) {
+        printf("WireGuard VPN:\n");
+        printf("==============\n");
+        printf("Enabled: %s\n", vpn_enabled ? "yes" : "no");
+        if (vpn_enabled) {
+            const char *state;
+            if (vpn_is_connected()) {
+                state = "peer up";
+            } else if (vpn_connected) {
+                state = "handshake pending";
+            } else {
+                state = "disconnected";
+            }
+            printf("Status: %s\n", state);
+        } else {
+            printf("Status: disabled\n");
+        }
+        printf("Tunnel IP: %s\n", (vpn_address && vpn_address[0]) ? vpn_address : "<not set>");
+        printf("Netmask: %s\n", (vpn_netmask && vpn_netmask[0]) ? vpn_netmask : "255.255.255.0");
+        printf("Endpoint: %s:%ld\n", (vpn_endpoint && vpn_endpoint[0]) ? vpn_endpoint : "<not set>", (long)vpn_port);
+        printf("Keepalive: %ld sec\n", (long)vpn_keepalive);
+        printf("Private Key: %s\n", (vpn_private_key && vpn_private_key[0]) ? "<set>" : "<not set>");
+        printf("Public Key: %s\n", (vpn_public_key && vpn_public_key[0]) ? vpn_public_key : "<not set>");
+        printf("Preshared Key: %s\n", (vpn_preshared_key && vpn_preshared_key[0]) ? "<set>" : "<not set>");
+        printf("MSS Clamp: %u\n", ap_mss_clamp);
+        printf("Path MTU: %u\n", ap_pmtu);
+        printf("Kill Switch: %s\n", vpn_killswitch ? "on" : "off");
+        printf("Route All: %s\n", vpn_route_all ? "yes (all traffic)" : "no (split tunnel)");
 
     } else if (strcmp(type, "ota") == 0) {
         const esp_partition_t *running = esp_ota_get_running_partition();
@@ -3277,6 +3308,102 @@ static int set_pppoe_cmd(int argc, char **argv)
     nvs_close(nvs);
     printf("PPPoE settings saved. Restart to apply.\n");
     return 0;
+}
+
+/** Arguments used by 'set_vpn' function */
+static struct {
+    struct arg_str *privkey;
+    struct arg_str *pubkey;
+    struct arg_str *endpoint;
+    struct arg_str *address;
+    struct arg_str *psk;
+    struct arg_str *mask;
+    struct arg_int *port;
+    struct arg_int *keepalive;
+    struct arg_int *enable;
+    struct arg_int *killswitch;
+    struct arg_int *route_all;
+    struct arg_end *end;
+} set_vpn_args;
+
+static int set_vpn_cmd(int argc, char **argv)
+{
+    int nerrors = arg_parse(argc, argv, (void **) &set_vpn_args);
+    if (nerrors != 0) {
+        arg_print_errors(stderr, set_vpn_args.end, argv[0]);
+        return 1;
+    }
+
+    nvs_handle_t nvs;
+    esp_err_t err = nvs_open(PARAM_NAMESPACE, NVS_READWRITE, &nvs);
+    if (err != ESP_OK) {
+        printf("Error opening NVS: %s\n", esp_err_to_name(err));
+        return 1;
+    }
+
+    if (set_vpn_args.privkey->count > 0) {
+        nvs_set_str(nvs, "vpn_privkey", set_vpn_args.privkey->sval[0]);
+    }
+    if (set_vpn_args.pubkey->count > 0) {
+        nvs_set_str(nvs, "vpn_pubkey", set_vpn_args.pubkey->sval[0]);
+    }
+    if (set_vpn_args.endpoint->count > 0) {
+        nvs_set_str(nvs, "vpn_endpoint", set_vpn_args.endpoint->sval[0]);
+    }
+    if (set_vpn_args.address->count > 0) {
+        nvs_set_str(nvs, "vpn_ip", set_vpn_args.address->sval[0]);
+    }
+    if (set_vpn_args.psk->count > 0) {
+        nvs_set_str(nvs, "vpn_psk", set_vpn_args.psk->sval[0]);
+    }
+    if (set_vpn_args.mask->count > 0) {
+        nvs_set_str(nvs, "vpn_mask", set_vpn_args.mask->sval[0]);
+    }
+    if (set_vpn_args.port->count > 0) {
+        nvs_set_i32(nvs, "vpn_port", set_vpn_args.port->ival[0]);
+    }
+    if (set_vpn_args.keepalive->count > 0) {
+        nvs_set_i32(nvs, "vpn_ka", set_vpn_args.keepalive->ival[0]);
+    }
+    if (set_vpn_args.enable->count > 0) {
+        nvs_set_i32(nvs, "vpn_enabled", set_vpn_args.enable->ival[0]);
+    }
+    if (set_vpn_args.killswitch->count > 0) {
+        nvs_set_i32(nvs, "vpn_ks", set_vpn_args.killswitch->ival[0]);
+    }
+    if (set_vpn_args.route_all->count > 0) {
+        nvs_set_i32(nvs, "vpn_rall", set_vpn_args.route_all->ival[0]);
+    }
+
+    nvs_commit(nvs);
+    nvs_close(nvs);
+    printf("VPN settings saved. Restart to apply.\n");
+    return 0;
+}
+
+static void register_set_vpn(void)
+{
+    set_vpn_args.privkey   = arg_str0(NULL, NULL, "<private_key>", "WireGuard private key (base64)");
+    set_vpn_args.pubkey    = arg_str0(NULL, NULL, "<public_key>", "Peer public key (base64)");
+    set_vpn_args.endpoint  = arg_str0(NULL, NULL, "<endpoint>", "Peer endpoint host/IP");
+    set_vpn_args.address   = arg_str0(NULL, NULL, "<address>", "Tunnel IP (e.g. 10.0.0.2)");
+    set_vpn_args.psk       = arg_str0("k", "psk", "<preshared_key>", "Preshared key (base64)");
+    set_vpn_args.mask      = arg_str0("m", "mask", "<netmask>", "Tunnel netmask (default 255.255.255.0)");
+    set_vpn_args.port      = arg_int0("p", "port", "<port>", "Peer UDP port (default 51820)");
+    set_vpn_args.keepalive = arg_int0("a", "keepalive", "<seconds>", "Persistent keepalive (0=disabled)");
+    set_vpn_args.enable    = arg_int0("e", "enable", "<0|1>", "Enable/disable VPN");
+    set_vpn_args.killswitch = arg_int0("K", "killswitch", "<0|1>", "Kill switch: block internet when VPN down (default on)");
+    set_vpn_args.route_all = arg_int0("R", "route-all", "<0|1>", "Route all traffic through VPN (0=split tunnel)");
+    set_vpn_args.end       = arg_end(4);
+
+    const esp_console_cmd_t cmd = {
+        .command = "set_vpn",
+        .help = "Configure WireGuard VPN (restart to apply)",
+        .hint = NULL,
+        .func = &set_vpn_cmd,
+        .argtable = &set_vpn_args
+    };
+    ESP_ERROR_CHECK( esp_console_cmd_register(&cmd) );
 }
 
 static void register_set_pppoe(void)

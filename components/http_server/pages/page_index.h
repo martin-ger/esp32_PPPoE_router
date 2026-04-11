@@ -188,6 +188,7 @@ font-size: 0.8rem;\
 <a href='/scan' class='nav-button'>📡 WiFi Scan</a>\
 <a href='/config' class='nav-button'>⚙️ Configuration</a>\
 <a href='/pppoe' class='nav-button'>🔌 PPPoE</a>\
+<a href='/vpn' class='nav-button'>🔒 VPN</a>\
 <a href='/mappings' class='nav-button'>🔀 Mappings</a>\
 <a href='/firewall' class='nav-button'>🛡️ Firewall</a>\
 </div>"
@@ -196,6 +197,7 @@ font-size: 0.8rem;\
 <div class='button-container'>\
 <a href='/config' class='nav-button'>⚙️ Configuration</a>\
 <a href='/pppoe' class='nav-button'>🔌 PPPoE</a>\
+<a href='/vpn' class='nav-button'>🔒 VPN</a>\
 <a href='/mappings' class='nav-button'>🔀 Mappings</a>\
 <a href='/firewall' class='nav-button'>🛡️ Firewall</a>\
 </div>"

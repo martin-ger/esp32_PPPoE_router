@@ -27,6 +27,7 @@
 #include "router_config.h"
 #include "wifi_config.h"
 #include "pppoe_config.h"
+#include "vpn_config.h"
 
 #if CONFIG_ETH_UPLINK
 #include "esp_eth.h"
@@ -635,6 +636,32 @@ static IRAM_ATTR err_t ap_netif_input_hook(struct pbuf *p, struct netif *netif) 
             }
             pbuf_free(p);
             return ERR_OK;
+        }
+    }
+
+    // VPN kill switch: block traffic when VPN is enabled but not connected.
+    // Route-all mode: block all non-local traffic (prevents internet leakage).
+    // Split tunnel mode: block only VPN-subnet traffic (internet goes direct).
+    if (vpn_enabled && vpn_killswitch && !vpn_is_connected()) {
+        if (p != NULL && p->len >= 14 + sizeof(struct ip_hdr)) {
+            uint8_t *payload = (uint8_t *)p->payload;
+            if (payload[12] == 0x08 && payload[13] == 0x00) {  // IPv4
+                struct ip_hdr *iphdr = (struct ip_hdr *)(payload + 14);
+                if (IPH_V(iphdr) == 4) {
+                    uint32_t dest = iphdr->dest.addr;
+                    uint32_t ap_subnet = my_ap_ip & htonl(0xFFFFFF00);
+                    bool is_local = (dest & htonl(0xFFFFFF00)) == ap_subnet;
+                    if (!is_local) {
+                        if (vpn_route_all) {
+                            pbuf_free(p);
+                            return ERR_OK;
+                        } else if (vpn_in_subnet(dest)) {
+                            pbuf_free(p);
+                            return ERR_OK;
+                        }
+                    }
+                }
+            }
         }
     }
 
