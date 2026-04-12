@@ -1470,8 +1470,10 @@ void app_main(void)
     }
     free(web_disabled);
 
+#if CONFIG_PCAP_CAPTURE
     // Initialize PCAP capture (TCP server on port 19000)
     pcap_init();
+#endif
 
     // Initialize remote console (TCP server on port 2323, disabled by default)
     remote_console_init();

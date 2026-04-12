@@ -74,7 +74,9 @@ static void register_dhcp_reserve(void);
 static void register_set_router_password(void);
 static void register_web_ui(void);
 static void register_bytes(void);
+#if CONFIG_PCAP_CAPTURE
 static void register_pcap(void);
+#endif
 static void register_set_led_gpio(void);
 static void register_set_led_lowactive(void);
 static void register_set_ttl(void);
@@ -338,7 +340,9 @@ void register_router(void)
     register_portmap();
     register_acl();
     register_bytes();
+#if CONFIG_PCAP_CAPTURE
     register_pcap();
+#endif
     register_web_ui();
     register_set_router_password();
     register_set_led_gpio();
@@ -1850,6 +1854,7 @@ static void register_bytes(void)
     ESP_ERROR_CHECK( esp_console_cmd_register(&cmd) );
 }
 
+#if CONFIG_PCAP_CAPTURE
 /* 'pcap' command arguments */
 static struct {
     struct arg_str* action;
@@ -1976,6 +1981,7 @@ static void register_pcap(void)
     };
     ESP_ERROR_CHECK( esp_console_cmd_register(&cmd) );
 }
+#endif /* CONFIG_PCAP_CAPTURE */
 
 /* 'set_led_gpio' command */
 static int set_led_gpio_cmd(int argc, char **argv)
@@ -2691,13 +2697,19 @@ static void acl_print_with_names(uint8_t acl_no)
 
         /* Format action */
         const char *action_str;
-        uint8_t action = rule->allow & 0x01;
-        uint8_t monitor = rule->allow & ACL_MONITOR;
-        if (action == ACL_ALLOW) {
-            action_str = monitor ? "allow+M" : "allow";
-        } else {
-            action_str = monitor ? "deny+M" : "deny";
+#if CONFIG_PCAP_CAPTURE
+        {
+            uint8_t action = rule->allow & 0x01;
+            uint8_t monitor = rule->allow & ACL_MONITOR;
+            if (action == ACL_ALLOW) {
+                action_str = monitor ? "allow+M" : "allow";
+            } else {
+                action_str = monitor ? "deny+M" : "deny";
+            }
         }
+#else
+        action_str = (rule->allow & 0x01) == ACL_ALLOW ? "allow" : "deny";
+#endif
 
         printf("%3d  %-6s  %-20s  %-20s  %-6s  %-6s  %-8s  %lu\n",
                i, proto_str, src_str, dest_str, s_port_str, d_port_str,
@@ -2719,7 +2731,11 @@ static int acl_cmd(int argc, char **argv)
         printf("\nProtocols: IP, TCP, UDP, ICMP\n");
         printf("Addresses: IP/mask, 'any', or device name from DHCP reservations\n");
         printf("Ports:     Port number or '*' for any (TCP/UDP only)\n");
+#if CONFIG_PCAP_CAPTURE
         printf("Actions:   allow, deny, allow_monitor, deny_monitor\n");
+#else
+        printf("Actions:   allow, deny\n");
+#endif
         printf("\nExamples:\n");
         printf("  acl from_esp clear\n");
         printf("  acl from_esp IP any 255.255.255.255 allow\n");
@@ -2855,7 +2871,11 @@ static int acl_cmd(int argc, char **argv)
 
     /* Parse action */
     if (arg_idx >= argc) {
+#if CONFIG_PCAP_CAPTURE
         printf("Missing action (allow, deny, allow_monitor, deny_monitor)\n");
+#else
+        printf("Missing action (allow, deny)\n");
+#endif
         return 1;
     }
     const char *action_str = argv[arg_idx];
@@ -2864,12 +2884,18 @@ static int acl_cmd(int argc, char **argv)
         allow = ACL_ALLOW;
     } else if (strcasecmp(action_str, "deny") == 0) {
         allow = ACL_DENY;
+#if CONFIG_PCAP_CAPTURE
     } else if (strcasecmp(action_str, "allow_monitor") == 0) {
         allow = ACL_ALLOW | ACL_MONITOR;
     } else if (strcasecmp(action_str, "deny_monitor") == 0) {
         allow = ACL_DENY | ACL_MONITOR;
+#endif
     } else {
+#if CONFIG_PCAP_CAPTURE
         printf("Invalid action: %s (use allow, deny, allow_monitor, deny_monitor)\n", action_str);
+#else
+        printf("Invalid action: %s (use allow, deny)\n", action_str);
+#endif
         return 1;
     }
 
@@ -2897,7 +2923,11 @@ static void register_acl(void)
                 "  acl <list> clear_stats       - Clear statistics for list\n"
                 "  Lists: to_esp, from_esp, to_ap, from_ap\n"
                 "  Protocols: IP, TCP, UDP, ICMP\n"
+#if CONFIG_PCAP_CAPTURE
                 "  Actions: allow, deny, allow_monitor, deny_monitor",
+#else
+                "  Actions: allow, deny",
+#endif
         .hint = " <list> <proto> <src> [<s_port>] <dst> [<d_port>] <action>",
         .func = &acl_cmd,
     };

@@ -23,7 +23,9 @@
 #include "lwip/inet_chksum.h"
 #include "acl.h"
 #include "client_stats.h"
+#if CONFIG_PCAP_CAPTURE
 #include "pcap_capture.h"
+#endif
 #include "router_config.h"
 #include "wifi_config.h"
 #include "pppoe_config.h"
@@ -142,30 +144,38 @@ void format_bytes_human(uint64_t bytes, char *buf, size_t len) {
 
 // Hook function to count received bytes via netif input and ACL check
 static IRAM_ATTR err_t netif_input_hook(struct pbuf *p, struct netif *netif) {
+#if CONFIG_PCAP_CAPTURE
     bool is_acl_monitored = false;
+#endif
 
     // Check to_esp ACL (packets from Internet to ESP32)
     if (!acl_is_empty(ACL_TO_ESP)) {
         uint8_t result = acl_check_packet(ACL_TO_ESP, p);
 
+#if CONFIG_PCAP_CAPTURE
         // Check if packet has monitor flag
         is_acl_monitored = (result != ACL_NO_MATCH) && (result & ACL_MONITOR) != 0;
+#endif
 
         // Handle deny action (logging done in acl_check_packet)
         if ((result & 0x01) == ACL_DENY && result != ACL_NO_MATCH) {
+#if CONFIG_PCAP_CAPTURE
             // Capture denied packet if monitoring is enabled before dropping
             if (is_acl_monitored && pcap_should_capture(true, false)) {
                 pcap_capture_packet(p);
             }
+#endif
             pbuf_free(p);
             return ERR_OK;
         }
     }
 
+#if CONFIG_PCAP_CAPTURE
     // Capture packet based on mode and ACL monitor flag (STA interface = false)
     if (pcap_should_capture(is_acl_monitored, false)) {
         pcap_capture_packet(p);
     }
+#endif
 
     // Count received bytes and toggle LED
     if (netif == sta_netif && p != NULL) {
@@ -187,21 +197,27 @@ static IRAM_ATTR err_t netif_input_hook(struct pbuf *p, struct netif *netif) {
 
 // Hook function to count sent bytes via netif linkoutput and ACL check
 static IRAM_ATTR err_t netif_linkoutput_hook(struct netif *netif, struct pbuf *p) {
+#if CONFIG_PCAP_CAPTURE
     bool is_acl_monitored = false;
+#endif
 
     // Check from_esp ACL (packets from ESP32 to Internet)
     if (!acl_is_empty(ACL_FROM_ESP)) {
         uint8_t result = acl_check_packet(ACL_FROM_ESP, p);
 
+#if CONFIG_PCAP_CAPTURE
         // Check if packet has monitor flag
         is_acl_monitored = (result != ACL_NO_MATCH) && (result & ACL_MONITOR) != 0;
+#endif
 
         // Handle deny action (logging done in acl_check_packet)
         if ((result & 0x01) == ACL_DENY && result != ACL_NO_MATCH) {
+#if CONFIG_PCAP_CAPTURE
             // Capture denied packet if monitoring is enabled before dropping
             if (is_acl_monitored && pcap_should_capture(true, false)) {
                 pcap_capture_packet(p);
             }
+#endif
             return ERR_OK;
         }
     }
@@ -236,10 +252,12 @@ static IRAM_ATTR err_t netif_linkoutput_hook(struct netif *netif, struct pbuf *p
         }
     }
 
+#if CONFIG_PCAP_CAPTURE
     // Capture packet based on mode and ACL monitor flag (STA interface = false)
     if (pcap_should_capture(is_acl_monitored, false)) {
         pcap_capture_packet(p);
     }
+#endif
 
     // Count sent bytes and toggle LED
     if (netif == sta_netif && p != NULL) {
@@ -262,16 +280,22 @@ static IRAM_ATTR err_t netif_linkoutput_hook(struct netif *netif, struct pbuf *p
 // Hook function for PPP netif output (IP-level, no Ethernet header)
 // Used when PPPoE is active — PPP netifs have netif->output, not linkoutput.
 static IRAM_ATTR err_t netif_output_hook(struct netif *netif, struct pbuf *p, const ip4_addr_t *ipaddr) {
+#if CONFIG_PCAP_CAPTURE
     bool is_acl_monitored = false;
+#endif
 
     // Check from_esp ACL
     if (!acl_is_empty(ACL_FROM_ESP)) {
         uint8_t result = acl_check_packet(ACL_FROM_ESP, p);
+#if CONFIG_PCAP_CAPTURE
         is_acl_monitored = (result != ACL_NO_MATCH) && (result & ACL_MONITOR) != 0;
+#endif
         if ((result & 0x01) == ACL_DENY && result != ACL_NO_MATCH) {
+#if CONFIG_PCAP_CAPTURE
             if (is_acl_monitored && pcap_should_capture(true, false)) {
                 pcap_capture_packet(p);
             }
+#endif
             return ERR_OK;
         }
     }
@@ -293,10 +317,12 @@ static IRAM_ATTR err_t netif_output_hook(struct netif *netif, struct pbuf *p, co
         }
     }
 
+#if CONFIG_PCAP_CAPTURE
     // PCAP capture
     if (pcap_should_capture(is_acl_monitored, false)) {
         pcap_capture_packet(p);
     }
+#endif
 
     // Count sent bytes and toggle LED
     if (netif == sta_netif && p != NULL) {
@@ -327,23 +353,31 @@ err_t __real_ip4_input(struct pbuf *p, struct netif *inp);
 
 IRAM_ATTR err_t __wrap_ip4_input(struct pbuf *p, struct netif *inp) {
     if (sta_netif != NULL && inp == sta_netif && p != NULL) {
+#if CONFIG_PCAP_CAPTURE
         bool is_acl_monitored = false;
+#endif
 
         if (!acl_is_empty(ACL_TO_ESP)) {
             uint8_t result = acl_check_packet(ACL_TO_ESP, p);
+#if CONFIG_PCAP_CAPTURE
             is_acl_monitored = (result != ACL_NO_MATCH) && (result & ACL_MONITOR) != 0;
+#endif
             if ((result & 0x01) == ACL_DENY && result != ACL_NO_MATCH) {
+#if CONFIG_PCAP_CAPTURE
                 if (is_acl_monitored && pcap_should_capture(true, false)) {
                     pcap_capture_packet(p);
                 }
+#endif
                 pbuf_free(p);
                 return ERR_OK;
             }
         }
 
+#if CONFIG_PCAP_CAPTURE
         if (pcap_should_capture(is_acl_monitored, false)) {
             pcap_capture_packet(p);
         }
+#endif
 
         sta_bytes_received += p->tot_len;
         if (led_gpio >= 0 && ap_connect) {
@@ -619,21 +653,27 @@ static void send_icmp_frag_needed(struct pbuf *p, struct netif *netif, uint16_t 
 
 // AP netif hook functions (for PCAP capture and ACL)
 static IRAM_ATTR err_t ap_netif_input_hook(struct pbuf *p, struct netif *netif) {
+#if CONFIG_PCAP_CAPTURE
     bool is_acl_monitored = false;
+#endif
 
     // Check to_ap ACL (packets from Clients to ESP32)
     if (!acl_is_empty(ACL_TO_AP)) {
         uint8_t result = acl_check_packet(ACL_TO_AP, p);
 
+#if CONFIG_PCAP_CAPTURE
         // Check if packet has monitor flag
         is_acl_monitored = (result != ACL_NO_MATCH) && (result & ACL_MONITOR) != 0;
+#endif
 
         // Handle deny action (logging done in acl_check_packet)
         if ((result & 0x01) == ACL_DENY && result != ACL_NO_MATCH) {
+#if CONFIG_PCAP_CAPTURE
             // Capture denied packet if monitoring is enabled before dropping
             if (is_acl_monitored && pcap_should_capture(true, true)) {
                 pcap_capture_packet(p);
             }
+#endif
             pbuf_free(p);
             return ERR_OK;
         }
@@ -683,10 +723,12 @@ static IRAM_ATTR err_t ap_netif_input_hook(struct pbuf *p, struct netif *netif) 
         }
     }
 
+#if CONFIG_PCAP_CAPTURE
     // Capture packet based on mode and ACL monitor flag (AP interface = true)
     if (pcap_should_capture(is_acl_monitored, true)) {
         pcap_capture_packet(p);
     }
+#endif
 
     // Call original input function
     if (original_ap_netif_input != NULL) {
@@ -697,21 +739,27 @@ static IRAM_ATTR err_t ap_netif_input_hook(struct pbuf *p, struct netif *netif) 
 }
 
 static IRAM_ATTR err_t ap_netif_linkoutput_hook(struct netif *netif, struct pbuf *p) {
+#if CONFIG_PCAP_CAPTURE
     bool is_acl_monitored = false;
+#endif
 
     // Check from_ap ACL (packets from ESP32 to Clients)
     if (!acl_is_empty(ACL_FROM_AP)) {
         uint8_t result = acl_check_packet(ACL_FROM_AP, p);
 
+#if CONFIG_PCAP_CAPTURE
         // Check if packet has monitor flag
         is_acl_monitored = (result != ACL_NO_MATCH) && (result & ACL_MONITOR) != 0;
+#endif
 
         // Handle deny action (logging done in acl_check_packet)
         if ((result & 0x01) == ACL_DENY && result != ACL_NO_MATCH) {
+#if CONFIG_PCAP_CAPTURE
             // Capture denied packet if monitoring is enabled before dropping
             if (is_acl_monitored && pcap_should_capture(true, true)) {
                 pcap_capture_packet(p);
             }
+#endif
             return ERR_OK;
         }
     }
@@ -729,10 +777,12 @@ static IRAM_ATTR err_t ap_netif_linkoutput_hook(struct netif *netif, struct pbuf
         }
     }
 
+#if CONFIG_PCAP_CAPTURE
     // Capture packet based on mode and ACL monitor flag (AP interface = true)
     if (pcap_should_capture(is_acl_monitored, true)) {
         pcap_capture_packet(p);
     }
+#endif
 
     // Call original linkoutput function
     if (original_ap_netif_linkoutput != NULL) {

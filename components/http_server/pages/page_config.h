@@ -166,6 +166,7 @@ setTimeout(\"location.href = '/'\", 10000);\
 </form>"
 
 /* PCAP section - uses: pcap_off/acl/promisc_sel, pcap_color, pcap_status, captured, dropped, snaplen, sta_ip */
+#if CONFIG_PCAP_CAPTURE
 #define CONFIG_CHUNK_PCAP "\
 <h2>PCAP Packet Capture</h2>\
 <form action='' method='GET'>\
@@ -185,6 +186,7 @@ setTimeout(\"location.href = '/'\", 10000);\
 </table>\
 <small>Connect using: nc %s 19000 | wireshark -k -i -</small>\
 </form>"
+#endif /* CONFIG_PCAP_CAPTURE */
 
 /* Device management and footer */
 #define CONFIG_CHUNK_TAIL "\

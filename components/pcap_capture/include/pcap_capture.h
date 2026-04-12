@@ -6,8 +6,10 @@
 */
 #pragma once
 
+#include "sdkconfig.h"
 #include <stdbool.h>
 #include <stdint.h>
+#include <stddef.h>
 #include "lwip/pbuf.h"
 
 #ifdef __cplusplus
@@ -24,6 +26,8 @@ typedef enum {
     PCAP_MODE_ACL_MONITOR,    /**< Only capture packets with ACL_MONITOR flag */
     PCAP_MODE_PROMISCUOUS     /**< Capture all traffic on hooked interfaces */
 } pcap_capture_mode_t;
+
+#if CONFIG_PCAP_CAPTURE
 
 /**
  * @brief Initialize PCAP capture system and start TCP server task
@@ -145,6 +149,28 @@ void pcap_set_link_type(uint32_t dlt);
  * @return Current DLT value
  */
 uint32_t pcap_get_link_type(void);
+
+#else /* !CONFIG_PCAP_CAPTURE — no-op stubs */
+
+static inline void pcap_init(void) {}
+static inline bool pcap_should_capture(bool a, bool b) { (void)a; (void)b; return false; }
+static inline void pcap_capture_packet(struct pbuf *p) { (void)p; }
+static inline void pcap_set_mode(pcap_capture_mode_t m) { (void)m; }
+static inline pcap_capture_mode_t pcap_get_mode(void) { return PCAP_MODE_OFF; }
+static inline const char* pcap_mode_to_string(pcap_capture_mode_t m) { (void)m; return "off"; }
+static inline void pcap_capture_start(void) {}
+static inline void pcap_capture_stop(void) {}
+static inline bool pcap_capture_enabled(void) { return false; }
+static inline bool pcap_client_connected(void) { return false; }
+static inline uint32_t pcap_get_captured_count(void) { return 0; }
+static inline uint32_t pcap_get_dropped_count(void) { return 0; }
+static inline void pcap_get_buffer_usage(size_t *used, size_t *total) { if (used) *used = 0; if (total) *total = 0; }
+static inline uint16_t pcap_get_snaplen(void) { return 64; }
+static inline bool pcap_set_snaplen(uint16_t s) { (void)s; return false; }
+static inline void pcap_set_link_type(uint32_t d) { (void)d; }
+static inline uint32_t pcap_get_link_type(void) { return 1; }
+
+#endif /* CONFIG_PCAP_CAPTURE */
 
 #ifdef __cplusplus
 }

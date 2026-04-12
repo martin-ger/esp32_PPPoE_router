@@ -5,6 +5,9 @@
    CONDITIONS OF ANY KIND, either express or implied.
 */
 
+#include "sdkconfig.h"
+#if CONFIG_PCAP_CAPTURE
+
 #include <string.h>
 #include <sys/time.h>
 #include <sys/socket.h>
@@ -415,3 +418,5 @@ uint32_t pcap_get_link_type(void)
 {
     return pcap_link_type;
 }
+
+#endif /* CONFIG_PCAP_CAPTURE */

@@ -5,6 +5,9 @@
    CONDITIONS OF ANY KIND, either express or implied.
 */
 
+#include "sdkconfig.h"
+#if CONFIG_PCAP_CAPTURE
+
 #include <string.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
@@ -305,3 +308,5 @@ void ringbuf_reset_dropped_count(void)
 {
     dropped_packets = 0;
 }
+
+#endif /* CONFIG_PCAP_CAPTURE */

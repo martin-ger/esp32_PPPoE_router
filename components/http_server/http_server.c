@@ -968,18 +968,22 @@ static esp_err_t index_get_handler(httpd_req_t *req)
     httpd_resp_send_chunk(req, row, HTTPD_RESP_USE_STRLEN);
 
     /* Stream Monitoring row */
-    pcap_capture_mode_t mode = pcap_get_mode();
-    if (mode != PCAP_MODE_OFF) {
-        const char* mode_name = (mode == PCAP_MODE_ACL_MONITOR) ? "ACL Monitor" : "Promiscuous";
-        snprintf(row, sizeof(row),
-                 "<tr><td>Monitoring:</td><td><span style='color: #4caf50;'>%s</span> (%lu captured, %lu dropped)</td></tr>",
-                 mode_name,
-                 (unsigned long)pcap_get_captured_count(),
-                 (unsigned long)pcap_get_dropped_count());
-    } else {
-        snprintf(row, sizeof(row), "<tr><td>Monitoring:</td><td><span style='color: #888;'>Off</span></td></tr>");
+#if CONFIG_PCAP_CAPTURE
+    {
+        pcap_capture_mode_t mode = pcap_get_mode();
+        if (mode != PCAP_MODE_OFF) {
+            const char* mode_name = (mode == PCAP_MODE_ACL_MONITOR) ? "ACL Monitor" : "Promiscuous";
+            snprintf(row, sizeof(row),
+                     "<tr><td>Monitoring:</td><td><span style='color: #4caf50;'>%s</span> (%lu captured, %lu dropped)</td></tr>",
+                     mode_name,
+                     (unsigned long)pcap_get_captured_count(),
+                     (unsigned long)pcap_get_dropped_count());
+        } else {
+            snprintf(row, sizeof(row), "<tr><td>Monitoring:</td><td><span style='color: #888;'>Off</span></td></tr>");
+        }
+        httpd_resp_send_chunk(req, row, HTTPD_RESP_USE_STRLEN);
     }
-    httpd_resp_send_chunk(req, row, HTTPD_RESP_USE_STRLEN);
+#endif
 
     /* Stream Uptime row */
     char uptime_str[32];
@@ -1449,6 +1453,7 @@ static esp_err_t config_get_handler(httpd_req_t *req)
                 return ESP_OK;
             }
 
+#if CONFIG_PCAP_CAPTURE
             /* Handle PCAP settings (single form) */
             if (httpd_query_key_value(buf, "pcap_save", param1, sizeof(param1)) == ESP_OK) {
                 if (httpd_query_key_value(buf, "pcap_mode", param1, sizeof(param1)) == ESP_OK) {
@@ -1475,6 +1480,7 @@ static esp_err_t config_get_handler(httpd_req_t *req)
                 httpd_resp_send(req, NULL, 0);
                 return ESP_OK;
             }
+#endif /* CONFIG_PCAP_CAPTURE */
         }
         free(buf);
     }
@@ -1588,6 +1594,7 @@ static esp_err_t config_get_handler(httpd_req_t *req)
             break;
     }
 
+#if CONFIG_PCAP_CAPTURE
     // PCAP state
     pcap_capture_mode_t pcap_mode = pcap_get_mode();
     const char* pcap_mode_off_sel = (pcap_mode == PCAP_MODE_OFF) ? "selected" : "";
@@ -1599,6 +1606,7 @@ static esp_err_t config_get_handler(httpd_req_t *req)
     uint32_t pcap_captured = pcap_get_captured_count();
     uint32_t pcap_dropped = pcap_get_dropped_count();
     int current_snaplen = pcap_get_snaplen();
+#endif /* CONFIG_PCAP_CAPTURE */
 
     /* Reusable buffer for building sections */
     char section[2048];
@@ -1675,19 +1683,21 @@ static esp_err_t config_get_handler(httpd_req_t *req)
         (unsigned long)rc_config.idle_timeout_sec);
     httpd_resp_send_chunk(req, section, HTTPD_RESP_USE_STRLEN);
 
+#if CONFIG_PCAP_CAPTURE
     /* Chunk 8: PCAP */
-    char sta_ip_str[16];
     {
+        char sta_ip_str[16];
         ip4_addr_t sta_addr;
         sta_addr.addr = my_ip;
         snprintf(sta_ip_str, sizeof(sta_ip_str), IPSTR, IP2STR(&sta_addr));
+        snprintf(section, sizeof(section), CONFIG_CHUNK_PCAP,
+            pcap_mode_off_sel, pcap_mode_acl_sel, pcap_mode_promisc_sel,
+            pcap_client_color, pcap_client_text,
+            (unsigned long)pcap_captured, (unsigned long)pcap_dropped,
+            current_snaplen, sta_ip_str);
+        httpd_resp_send_chunk(req, section, HTTPD_RESP_USE_STRLEN);
     }
-    snprintf(section, sizeof(section), CONFIG_CHUNK_PCAP,
-        pcap_mode_off_sel, pcap_mode_acl_sel, pcap_mode_promisc_sel,
-        pcap_client_color, pcap_client_text,
-        (unsigned long)pcap_captured, (unsigned long)pcap_dropped,
-        current_snaplen, sta_ip_str);
-    httpd_resp_send_chunk(req, section, HTTPD_RESP_USE_STRLEN);
+#endif /* CONFIG_PCAP_CAPTURE */
 
     /* Chunk 9: Device management heading */
     httpd_resp_send_chunk(req, CONFIG_CHUNK_TAIL, HTTPD_RESP_USE_STRLEN);

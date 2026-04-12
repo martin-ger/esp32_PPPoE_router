@@ -1,0 +1,15 @@
+menu "PCAP Capture"
+
+    config PCAP_CAPTURE
+        bool "Enable PCAP packet capture"
+        default n
+        help
+            Enable live packet capture streamed over TCP (port 19000)
+            to Wireshark or tcpdump.  Adds a TCP server task, a ring
+            buffer (~16-32 KB RAM depending on target), and the 'pcap'
+            CLI command.  Also enables allow_monitor / deny_monitor ACL
+            actions and the PCAP section on the config web page.
+
+            Disable to save flash and RAM on constrained targets.
+
+endmenu
