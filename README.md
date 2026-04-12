@@ -23,7 +23,7 @@ An ESP32-based NAT WAN router for the **[WT32-ETH01](https://github.com/egnor/wt
 - Remote CLI console over TCP (password-protected)
 - Remote syslog forwarding (UDP, RFC 3164)
 - OTA firmware update via web interface
-- Configuration import / export via web interface
+- Configuration backup / restore via web interface (plain JSON or passphrase-encrypted)
 - Optional per-client traffic statistics
 - TTL override and TCP MSS clamping
 
@@ -64,7 +64,7 @@ Full router configuration, split into sections:
 - STA / uplink mode and settings (static IP)
 - Remote console settings (port, timeout)
 - PCAP monitoring settings (mode, snaplen) — only shown when built with `CONFIG_PCAP_CAPTURE`
-- System settings (OTA update, save/restore settings)
+- System settings (OTA update, config backup / restore)
 
 **PPPoE**
 
@@ -90,6 +90,23 @@ WireGuard configuration: private key, peer public key, optional preshared key, e
 ### Password Protection
 
 An optional password protects all pages except the status dashboard. Set via the web interface or `set_router_password`. Authentication uses SHA-256 with a 16-byte random salt. Sessions are cookie-based with a 30-minute idle timeout. Clearing the password opens all pages without authentication.
+
+### Config Backup / Restore
+
+The **Configuration** page exports the full NVS config as a JSON file and can import it back.
+
+**Export — two modes depending on whether a passphrase is entered:**
+
+| Export type | WiFi passwords | WireGuard private key + PSK | PPPoE password |
+|-------------|----------------|-----------------------------|----------------|
+| Plain (no passphrase) | included | **omitted** | **omitted** |
+| Encrypted (passphrase) | included | included | included |
+
+Encrypted exports use XChaCha20-Poly1305 AEAD with a 32-byte key derived from the passphrase via PBKDF2-HMAC-SHA256 (10 000 iterations, 16-byte random salt). The ciphertext is wrapped in a JSON envelope `{"enc":1,"s":"…","n":"…","c":"…"}` so encrypted and plain files share the same `.json` extension and the import handler detects the format automatically.
+
+**Import:** if the file is encrypted, enter the passphrase in the *Import* passphrase field before choosing the file. A wrong passphrase is rejected by the authentication tag before any NVS keys are touched.
+
+Both endpoints (`/api/config-export`, `/api/config-import`) require an active session when password protection is enabled and are guarded by the CSRF Origin check.
 
 ---
 
