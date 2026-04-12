@@ -1,6 +1,6 @@
 # ESP32 PPPoE Router
 
-An ESP32-based NAT WAN router for the **[WT32-ETH01](https://github.com/egnor/wt32-eth01)** board with a wired uplink. It can speak PPPoE directly to a WAN/DSL/cable modem, but it also supports DHCP for pure Ethernet uplink. Clients connect via WiFi (softAP). Includes a full web interface, firewall, DHCP reservations, port forwarding, and PCAP capture.
+An ESP32-based NAT WAN router for the **[WT32-ETH01](https://github.com/egnor/wt32-eth01)** board with a wired uplink. It can speak PPPoE directly to a WAN/DSL/cable modem, but it also supports DHCP for pure Ethernet uplink. Clients connect via WiFi (softAP). Includes a full web interface, firewall, DHCP reservations, port forwarding, WireGuard VPN, and optional PCAP capture.
 
 ---
 
@@ -18,7 +18,8 @@ An ESP32-based NAT WAN router for the **[WT32-ETH01](https://github.com/egnor/wt
 - Stateless packet firewall with four ACL lists and hit counters
 - DHCP server with IP reservations, client blocking, and static pool
 - Port forwarding (TCP / UDP) with device-name resolution
-- PCAP packet capture streamed to Wireshark over TCP (port 19000)
+- WireGuard VPN client (route-all or split-tunnel, kill switch, VPN-bound port maps)
+- PCAP packet capture streamed to Wireshark over TCP — optional build feature, disabled by default
 - Remote CLI console over TCP (password-protected)
 - Remote syslog forwarding (UDP, RFC 3164)
 - OTA firmware update via web interface
@@ -62,7 +63,7 @@ Full router configuration, split into sections:
 - AP settings (SSID, password, channel, auth mode, hidden SSID, IP range, MAC)
 - STA / uplink mode and settings (static IP)
 - Remote console settings (port, timeout)
-- Pcap monitoring settings (mode, snaplen)
+- PCAP monitoring settings (mode, snaplen) — only shown when built with `CONFIG_PCAP_CAPTURE`
 - System settings (OTA update, save/restore settings)
 
 **PPPoE**
@@ -82,6 +83,9 @@ DHCP lease and reservation management, and port-forwarding rules:
 
 ACL rule management across all four packet-flow lists (`to_esp`, `from_esp`, `to_ap`, `from_ap`). Add rules with protocol, source/destination CIDR, ports, and allow/deny/monitor action. View per-rule hit counters and clear statistics.
 
+**VPN**
+
+WireGuard configuration: private key, peer public key, optional preshared key, endpoint host and port, tunnel IP, netmask, persistent keepalive, route-all / split-tunnel toggle, and kill switch. Also shows live connection state, tunnel IP, and MSS/PMTU values.
 
 ### Password Protection
 
@@ -138,6 +142,34 @@ portmap del UDP <ext_port>                     # Delete UDP mapping
 
 Device names from DHCP reservations can be used in place of IP addresses.
 
+### WireGuard VPN
+
+A WireGuard client tunnel that protects all AP client traffic. Two routing modes are supported:
+
+| Mode | Behaviour |
+|------|-----------|
+| **Route-all** | All AP client traffic is sent through the tunnel. The WireGuard netif becomes the default route. |
+| **Split tunnel** | Only traffic destined for the configured VPN subnet is sent through the tunnel; everything else goes directly to the WAN. |
+
+A **kill switch** can be enabled to block all non-local AP traffic whenever the VPN is enabled but not yet connected, preventing internet leakage during reconnection. Port-forwarding rules can be flagged as VPN-bound so they activate only while the tunnel is up.
+
+MTU and MSS are adjusted automatically to account for WireGuard overhead (60 bytes: 20 IP + 8 UDP + 16 WireGuard header + 16 authentication tag).
+
+```bash
+set_vpn <private_key>               # WireGuard private key (base64)
+set_vpn <public_key>                # Peer public key (base64)
+set_vpn <endpoint>                  # Peer host / IP
+set_vpn <address>                   # Tunnel IP (e.g. 10.0.0.2)
+set_vpn -m <netmask>                # Tunnel netmask (default 255.255.255.0)
+set_vpn -p <port>                   # Peer UDP port (default 51820)
+set_vpn -a <seconds>                # Persistent keepalive (0 = disabled)
+set_vpn -k <preshared_key>          # Optional preshared key (base64)
+set_vpn -e <0|1>                    # Enable / disable VPN
+set_vpn -K <0|1>                    # Kill switch (default on)
+set_vpn -R <0|1>                    # 1 = route-all, 0 = split tunnel
+show vpn                            # Show VPN status and config
+```
+
 ### Other Network Settings
 
 ```bash
@@ -174,7 +206,7 @@ acl <list> <proto> <src> [<sport>] <dst> [<dport>] <action>
 
 **port:** port number or `any` (TCP/UDP only; ignored for `ip`/`icmp`)
 
-**action:** `allow`, `deny`, `allow_monitor` (allow + PCAP capture), `deny_monitor`
+**action:** `allow`, `deny`, `allow_monitor` (allow + PCAP capture), `deny_monitor` — monitor actions available only when `CONFIG_PCAP_CAPTURE` is enabled
 
 **Examples:**
 
@@ -187,22 +219,30 @@ acl to_esp clear                               # Remove all rules from to_esp
 show acl                                       # Show all lists and hit counts
 ```
 
-### Packet Capture
+### Packet Capture *(optional build feature)*
 
-Packets are streamed as a PCAP file over a TCP connection on port 19000. Open the stream directly in Wireshark: **File → Open → TCP connection**.
+> **Disabled by default.** Enable with `idf.py menuconfig` → *PCAP Capture* → *Enable PCAP packet capture* (`CONFIG_PCAP_CAPTURE=y`). When disabled, the TCP server task and ring buffer are omitted and the PCAP section does not appear in the web interface or CLI.
+
+Packets are streamed as a live PCAP file over a TCP connection on port 19000, bound to the AP interface only (never exposed on the WAN). Open the stream directly in Wireshark:
+
+```bash
+nc <router_ap_ip> 19000 | wireshark -k -i -
+```
 
 #### Capture Modes
 
-| Mode | Behavior |
-|------|----------|
+| Mode | Behaviour |
+|------|-----------|
 | `off` | Capture disabled |
-| `acl` | Only packets matching an ACL rule with the `monitor` flag |
-| `promisc` | All traffic on the PPP/uplink interface |
+| `acl` | Only packets matching an ACL rule with `allow_monitor` or `deny_monitor` |
+| `promisc` | All traffic passing through the PPP/Ethernet uplink interface |
+
+In `acl` mode, adding `allow_monitor` or `deny_monitor` as the action on a firewall rule causes matching packets to be captured regardless of the global mode, making it easy to watch specific hosts or ports.
 
 ```bash
 pcap mode <off|acl|promisc>                    # Set capture mode
-pcap snaplen <64-1600>                         # Max bytes per packet
-pcap status                                    # Show current mode and stats
+pcap snaplen <64-1600>                         # Max bytes per packet (default 64/96)
+pcap status                                    # Show mode, client, and packet stats
 ```
 
 ### Remote Console
@@ -286,15 +326,32 @@ Connect to the serial console at **115200 bps** or via the remote console.
 | `acl <list> clear` | Clear all rules in list |
 | `acl <list> clear_stats` | Reset hit counters for list |
 
-Lists: `to_esp`, `from_esp`, `to_ap`, `from_ap` — Protocols: `IP`, `TCP`, `UDP`, `ICMP` — Actions: `allow`, `deny`, `allow_monitor`, `deny_monitor`
+Lists: `to_esp`, `from_esp`, `to_ap`, `from_ap` — Protocols: `IP`, `TCP`, `UDP`, `ICMP` — Actions: `allow`, `deny`; also `allow_monitor`, `deny_monitor` when `CONFIG_PCAP_CAPTURE` is enabled
 
-### Packet Capture
+### WireGuard VPN
+
+| Command | Description |
+|---------|-------------|
+| `show vpn` | VPN status and full configuration |
+| `set_vpn <privkey>` | Set private key (base64) |
+| `set_vpn <pubkey>` | Set peer public key (base64) |
+| `set_vpn <endpoint>` | Set peer host / IP |
+| `set_vpn <address>` | Set tunnel IP address |
+| `set_vpn -m <netmask>` | Tunnel netmask (default 255.255.255.0) |
+| `set_vpn -p <port>` | Peer UDP port (default 51820) |
+| `set_vpn -a <seconds>` | Persistent keepalive (0 = disabled) |
+| `set_vpn -k <psk>` | Preshared key (base64, optional) |
+| `set_vpn -e <0\|1>` | Enable / disable VPN |
+| `set_vpn -K <0\|1>` | Kill switch on/off |
+| `set_vpn -R <0\|1>` | 1 = route-all, 0 = split tunnel |
+
+### Packet Capture *(CONFIG_PCAP_CAPTURE)*
 
 | Command | Description |
 |---------|-------------|
 | `pcap mode [off\|acl\|promisc]` | Get / set capture mode |
 | `pcap snaplen [<n>]` | Get / set max bytes per packet (64–1600) |
-| `pcap status` | Show capture state |
+| `pcap status` | Show capture state, client, and packet counts |
 
 ### Remote Console and Syslog
 
@@ -407,9 +464,19 @@ Prerequisites: ESP-IDF v5.5 or later with the `xtensa-esp32-elf` toolchain.
 # Set target
 idf.py set-target esp32
 
+# (Optional) configure build-time features
+idf.py menuconfig
+
 # Build
 idf.py build
 ```
+
+### Build-time Options
+
+| Kconfig symbol | Default | Description |
+|----------------|---------|-------------|
+| `CONFIG_PCAP_CAPTURE` | **off** | Enable live PCAP capture over TCP. Adds ~16–32 KB RAM for the ring buffer and a TCP server task. When off, the `pcap` CLI command and PCAP config page are absent and `allow_monitor`/`deny_monitor` ACL actions are unavailable. |
+| `CONFIG_MQTT_HOMEASSISTANT` | on | Publish router telemetry to an MQTT broker with Home Assistant auto-discovery. Adds ~58 KB flash; RAM is used only when a broker is configured. |
 
 ---
 
