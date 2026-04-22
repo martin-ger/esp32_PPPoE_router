@@ -358,6 +358,7 @@ void * led_status_thread(void * p)
                         nvs_commit(nvs);
                         nvs_close(nvs);
                     }
+                    esp_wifi_restore();
                     esp_restart();
                 }
             } else {
