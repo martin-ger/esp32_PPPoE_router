@@ -67,6 +67,7 @@
 #include "remote_console.h"
 #include "syslog_client.h"
 #include "vpn_config.h"
+#include "mdns.h"
 #if CONFIG_MQTT_HOMEASSISTANT
 #include "mqtt_ha.h"
 #endif
@@ -1460,8 +1461,8 @@ void app_main(void)
     if (web_disabled == NULL) {
         web_disabled = param_set_default("0");
     }
+    int web_port_setting = 80;
     if (strcmp(web_disabled, "0") ==0) {
-        int web_port_setting = 80;
         get_config_param_int("web_port", &web_port_setting);
         ESP_LOGI(TAG,"Starting web server on port %d", web_port_setting);
         start_webserver((uint16_t)web_port_setting);
@@ -1469,6 +1470,23 @@ void app_main(void)
         get_config_param_int("wan_access", &wa);
         update_web_wan_acl(wa);
     }
+
+    // Initialize mDNS responder — answers <hostname>.local on all interfaces.
+    if (hostname && hostname[0]) {
+        esp_err_t merr = mdns_init();
+        if (merr == ESP_OK) {
+            mdns_hostname_set(hostname);
+            mdns_instance_name_set(hostname);
+            if (strcmp(web_disabled, "0") == 0) {
+                mdns_service_add(NULL, "_http", "_tcp",
+                                 (uint16_t)web_port_setting, NULL, 0);
+            }
+            ESP_LOGI(TAG, "mDNS responder up: %s.local", hostname);
+        } else {
+            ESP_LOGW(TAG, "mdns_init failed: %s", esp_err_to_name(merr));
+        }
+    }
+
     free(web_disabled);
 
 #if CONFIG_PCAP_CAPTURE
