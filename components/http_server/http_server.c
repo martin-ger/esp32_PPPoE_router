@@ -3358,8 +3358,6 @@ static esp_err_t vpn_get_handler(httpd_req_t *req)
     if (buf_len > 1) {
         buf = malloc(buf_len);
         if (buf != NULL && httpd_req_get_url_query_str(req, buf, buf_len) == ESP_OK) {
-            ESP_LOGI(TAG, "VPN query => %s", buf);
-
             char param[128];
             bool has_config = false;
 
@@ -3537,6 +3535,233 @@ static httpd_uri_t vpnp = {
     .handler   = vpn_get_handler,
 };
 
+#if CONFIG_DDNS_ENABLED
+/* ------------------------------------------------------------------ */
+/*  /ddns — Dynamic DNS configuration                                  */
+/* ------------------------------------------------------------------ */
+
+#define DDNS_ROW_BUF 512
+
+static esp_err_t ddns_get_handler(httpd_req_t *req);
+
+static httpd_uri_t ddnsp = {
+    .uri     = "/ddns",
+    .method  = HTTP_GET,
+    .handler = ddns_get_handler,
+};
+
+static esp_err_t ddns_get_handler(httpd_req_t *req)
+{
+    resume_sta_if_scan_idle();
+
+    if (is_web_password_set() && !is_authenticated(req)) {
+        { char _ip[16]; ESP_LOGW(TAG, "Unauthenticated /ddns from %s",
+              get_client_ip(req, _ip, sizeof(_ip))); }
+        httpd_resp_set_status(req, "303 See Other");
+        httpd_resp_set_hdr(req, "Location", "/?auth_required=1");
+        httpd_resp_send(req, NULL, 0);
+        return ESP_OK;
+    }
+
+    /* ---- Process any submitted params, then redirect to clean URL ---- */
+    size_t qlen = httpd_req_get_url_query_len(req) + 1;
+    if (qlen > 1) {
+        char *qs = malloc(qlen);
+        if (qs && httpd_req_get_url_query_str(req, qs, qlen) == ESP_OK) {
+            char param[DDNS_MAX_TOKEN + 1];
+            bool triggered = false;
+            bool acted    = false;
+
+            if (httpd_query_key_value(qs, "ddns_trigger", param, sizeof(param)) == ESP_OK
+                    && strcmp(param, "1") == 0) {
+                ddns_trigger_update();
+                triggered = true;
+                acted     = true;
+            } else if (httpd_query_key_value(qs, "ddns_en", param, sizeof(param)) == ESP_OK) {
+                acted = true;
+                nvs_handle_t nvs;
+                if (nvs_open(PARAM_NAMESPACE, NVS_READWRITE, &nvs) == ESP_OK) {
+                    nvs_set_i32(nvs, "ddns_en", atoi(param));
+                    if (httpd_query_key_value(qs, "ddns_prov", param, sizeof(param)) == ESP_OK)
+                        nvs_set_u8(nvs, "ddns_prov", (uint8_t)atoi(param));
+                    if (httpd_query_key_value(qs, "ddns_host", param, sizeof(param)) == ESP_OK) {
+                        preprocess_string(param);
+                        nvs_set_str(nvs, "ddns_host", param);
+                    }
+                    if (httpd_query_key_value(qs, "ddns_token", param, sizeof(param)) == ESP_OK) {
+                        preprocess_string(param);
+                        nvs_set_str(nvs, "ddns_token", param);
+                    }
+                    if (httpd_query_key_value(qs, "ddns_pass", param, sizeof(param)) == ESP_OK) {
+                        preprocess_string(param);
+                        nvs_set_str(nvs, "ddns_pass", param);
+                    }
+                    if (httpd_query_key_value(qs, "ddns_poll", param, sizeof(param)) == ESP_OK)
+                        nvs_set_i32(nvs, "ddns_poll", atoi(param));
+                    nvs_commit(nvs);
+                    nvs_close(nvs);
+                    ddns_reload_config();
+                    ESP_LOGI(TAG, "DDNS config saved and reloaded");
+                }
+            }
+            free(qs);
+
+            /* Only redirect when we actually processed a form submission.
+             * Unknown params (e.g. ?saved=1, ?triggered=1) fall through to render. */
+            if (acted) {
+                httpd_resp_set_status(req, "303 See Other");
+                httpd_resp_set_hdr(req, "Location",
+                    triggered ? "/ddns?triggered=1" : "/ddns?saved=1");
+                httpd_resp_send(req, NULL, 0);
+                return ESP_OK;
+            }
+        } else {
+            free(qs);
+        }
+    }
+
+    /* ---- Render page (read fresh values from NVS) ---- */
+    int32_t en = 0;
+    uint8_t prov = 0;
+    char host[DDNS_MAX_HOSTNAME]  = "";
+    char token[DDNS_MAX_TOKEN]    = "";
+    char pass[DDNS_MAX_PASS]      = "";
+    int32_t poll_iv = CONFIG_DDNS_POLL_INTERVAL;
+
+    nvs_handle_t nvs;
+    if (nvs_open(PARAM_NAMESPACE, NVS_READONLY, &nvs) == ESP_OK) {
+        nvs_get_i32(nvs, "ddns_en",   &en);
+        nvs_get_u8 (nvs, "ddns_prov", &prov);
+        size_t len;
+        len = sizeof(host);  nvs_get_str(nvs, "ddns_host",  host,  &len);
+        len = sizeof(token); nvs_get_str(nvs, "ddns_token", token, &len);
+        len = sizeof(pass);  nvs_get_str(nvs, "ddns_pass",  pass,  &len);
+        nvs_get_i32(nvs, "ddns_poll", &poll_iv);
+        nvs_close(nvs);
+    }
+
+    httpd_resp_set_type(req, "text/html; charset=utf-8");
+    httpd_resp_set_status(req, "200 OK");
+
+    /* Head + open header flex row */
+    httpd_resp_send_chunk(req, DDNS_CHUNK_HEAD, HTTPD_RESP_USE_STRLEN);
+
+    /* Optional logout button (right side of header) */
+    if (session_active && is_web_password_set()) {
+        httpd_resp_send_chunk(req,
+            "<a href='/?logout=1' style='padding: 0.4rem 1rem; background: rgba(255,82,82,0.15);"
+            " color: #ff5252; border: 1px solid #ff5252; border-radius: 6px;"
+            " text-decoration: none; font-size: 0.85rem; font-weight: 500;'>Logout</a>",
+            HTTPD_RESP_USE_STRLEN);
+    }
+
+    /* Close header flex row + script */
+    httpd_resp_send_chunk(req, DDNS_CHUNK_MID, HTTPD_RESP_USE_STRLEN);
+
+    char row[DDNS_ROW_BUF];
+
+    /* ---- Status section (shown first, like VPN page) ---- */
+    httpd_resp_send_chunk(req,
+        "<h2>Status</h2>"
+        "<div class='status-table'><table>",
+        HTTPD_RESP_USE_STRLEN);
+
+    char sbuf[512];
+    ddns_get_status_html(sbuf, sizeof(sbuf));
+    httpd_resp_send_chunk(req, sbuf, HTTPD_RESP_USE_STRLEN);
+    httpd_resp_send_chunk(req, "</table></div>", HTTPD_RESP_USE_STRLEN);
+
+    /* ---- Trigger — separate form so it does not re-submit config ---- */
+    httpd_resp_send_chunk(req,
+        "<form action='/ddns' method='GET'>"
+        "<input type='hidden' name='ddns_trigger' value='1'/>"
+        "<input type='submit' value='Trigger Update Now' class='ok-button'/>"
+        "</form>",
+        HTTPD_RESP_USE_STRLEN);
+
+    /* ---- Config form ---- */
+    httpd_resp_send_chunk(req, DDNS_CHUNK_FORM_OPEN, HTTPD_RESP_USE_STRLEN);
+
+    /* Enabled + Provider */
+    snprintf(row, sizeof(row),
+        "<tr><td>Enabled</td><td>"
+        "<select name='ddns_en'>"
+        "<option value='1'%s>Yes</option>"
+        "<option value='0'%s>No</option>"
+        "</select></td></tr>"
+        "<tr><td>Provider</td><td>"
+        "<select id='ddns_prov' name='ddns_prov'>"
+        "<option value='0'%s>NoIP</option>"
+        "<option value='1'%s>DuckDNS</option>"
+        "<option value='2'%s>Selfhost.de</option>"
+        "</select></td></tr>",
+        en == 1 ? " selected" : "", en != 1 ? " selected" : "",
+        prov == 0 ? " selected" : "",
+        prov == 1 ? " selected" : "",
+        prov == 2 ? " selected" : "");
+    httpd_resp_send_chunk(req, row, HTTPD_RESP_USE_STRLEN);
+
+    /* Hostname/Subdomain — label and hint updated by JS */
+    snprintf(row, sizeof(row),
+        "<tr><td id='lbl_host'>Hostname</td><td>"
+        "<input type='text' name='ddns_host' value='%s' autocomplete='off'/>"
+        "<small id='hint_host'></small>"
+        "</td></tr>",
+        host);
+    httpd_resp_send_chunk(req, row, HTTPD_RESP_USE_STRLEN);
+
+    /* NoIP: username (token field used as username) */
+    snprintf(row, sizeof(row),
+        "<tr id='row_user'><td>Username</td><td>"
+        "<input type='text' name='ddns_token' value='%s' autocomplete='username'/>"
+        "</td></tr>",
+        token);
+    httpd_resp_send_chunk(req, row, HTTPD_RESP_USE_STRLEN);
+
+    /* NoIP: password */
+    snprintf(row, sizeof(row),
+        "<tr id='row_pass'><td>Password</td><td>"
+        "<input type='password' name='ddns_pass' value='%s' autocomplete='current-password'/>"
+        "</td></tr>",
+        pass);
+    httpd_resp_send_chunk(req, row, HTTPD_RESP_USE_STRLEN);
+
+    /* DuckDNS / Selfhost: API token */
+    snprintf(row, sizeof(row),
+        "<tr id='row_tok'><td>Token</td><td>"
+        "<input type='text' name='ddns_token' value='%s' autocomplete='off'/>"
+        "</td></tr>",
+        token);
+    httpd_resp_send_chunk(req, row, HTTPD_RESP_USE_STRLEN);
+
+    /* Poll interval */
+    snprintf(row, sizeof(row),
+        "<tr><td>Poll interval</td><td>"
+        "<input type='number' name='ddns_poll' value='%d' min='60' max='86400'/>"
+        "<small>Seconds between IP checks &mdash; 60 to 86400</small>"
+        "</td></tr>",
+        (int)poll_iv);
+    httpd_resp_send_chunk(req, row, HTTPD_RESP_USE_STRLEN);
+
+    /* Save button + close config form */
+    httpd_resp_send_chunk(req, DDNS_CHUNK_FORM_CLOSE, HTTPD_RESP_USE_STRLEN);
+
+    /* Home link */
+    httpd_resp_send_chunk(req,
+        "<div style='margin-top: 1.5rem; text-align: center;'>"
+        "<a href='/' style='padding: 0.6rem 1.5rem; background: linear-gradient(135deg, #2d6a8f 0%, #1e4d6b 100%);"
+        " color: #fff; border: none; border-radius: 8px; text-decoration: none;"
+        " font-size: 0.9rem; font-weight: 600;'>\xf0\x9f\x8f\xa0 Home</a>"
+        "</div>",
+        HTTPD_RESP_USE_STRLEN);
+
+    httpd_resp_send_chunk(req, DDNS_CHUNK_TAIL, HTTPD_RESP_USE_STRLEN);
+    httpd_resp_send_chunk(req, NULL, 0);
+    return ESP_OK;
+}
+
+#endif /* CONFIG_DDNS_ENABLED */
+
 static esp_err_t captive_redirect_handler(httpd_req_t *req, httpd_err_code_t err);
 
 httpd_handle_t start_webserver(uint16_t port)
@@ -3565,6 +3790,9 @@ httpd_handle_t start_webserver(uint16_t port)
 #endif
         httpd_register_uri_handler(server, &pppoep);
         httpd_register_uri_handler(server, &vpnp);
+#if CONFIG_DDNS_ENABLED
+        httpd_register_uri_handler(server, &ddnsp);
+#endif
 #if !CONFIG_ETH_UPLINK
         httpd_register_uri_handler(server, &setupp);
 #endif

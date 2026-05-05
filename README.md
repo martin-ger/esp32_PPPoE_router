@@ -19,6 +19,7 @@ An ESP32-based NAT WAN router for the **[WT32-ETH01](https://github.com/egnor/wt
 - DHCP server with IP reservations, client blocking, and static pool
 - Port forwarding (TCP / UDP) with device-name resolution
 - WireGuard VPN client (route-all or split-tunnel, kill switch, VPN-bound port maps)
+- Dynamic DNS (DDNS) with automatic WAN IP registration — supports NoIP, DuckDNS, and Selfhost.de
 - PCAP packet capture streamed to Wireshark over TCP — optional build feature, disabled by default
 - Remote CLI console over TCP (password-protected)
 - Remote syslog forwarding (UDP, RFC 3164)
@@ -86,6 +87,10 @@ ACL rule management across all four packet-flow lists (`to_esp`, `from_esp`, `to
 **VPN**
 
 WireGuard configuration: private key, peer public key, optional preshared key, endpoint host and port, tunnel IP, netmask, persistent keepalive, route-all / split-tunnel toggle, and kill switch. Also shows live connection state, tunnel IP, and MSS/PMTU values.
+
+**DDNS**
+
+Dynamic DNS configuration page (only shown when built with `CONFIG_DDNS_ENABLED=y`). Provides provider selection (NoIP, DuckDNS, Selfhost.de), hostname/subdomain, credentials or token fields, poll interval, and a "Trigger Update" button for immediate DNS push. Live status (enabled/disabled, provider, last-update timestamp, last-reported WAN IP) is displayed.
 
 ### Password Protection
 
@@ -172,20 +177,55 @@ A **kill switch** can be enabled to block all non-local AP traffic whenever the 
 
 MTU and MSS are adjusted automatically to account for WireGuard overhead (60 bytes: 20 IP + 8 UDP + 16 WireGuard header + 16 authentication tag).
 
+### Dynamic DNS (DDNS)
+
+Automatically registers your WAN (PPPoE) IP address with a dynamic DNS provider when the uplink comes up or when the WAN IP changes. All connections use HTTPS.
+
+Supported providers:
+
+| Provider | Setup |
+|------|------|
+| **NoIP** | Username, password, full FQDN |
+| **DuckDNS** | Subdomain name, authentication token |
+| **Selfhost.de** | Full FQDN, authentication token |
+
+When DDNS is enabled the router automatically updates the DNS record:
+
+- **Immediately** on every PPPoE connect (IP address change detection)
+- **Periodically** at the configured poll interval (default 300 s) — only pushes if the WAN IP has actually changed
+
+Configuration is accessed via the web interface (**DDNS** page) or CLI:
+
 ```bash
-set_vpn <private_key>               # WireGuard private key (base64)
-set_vpn <public_key>                # Peer public key (base64)
-set_vpn <endpoint>                  # Peer host / IP
-set_vpn <address>                   # Tunnel IP (e.g. 10.0.0.2)
-set_vpn -m <netmask>                # Tunnel netmask (default 255.255.255.0)
-set_vpn -p <port>                   # Peer UDP port (default 51820)
-set_vpn -a <seconds>                # Persistent keepalive (0 = disabled)
-set_vpn -k <preshared_key>          # Optional preshared key (base64)
-set_vpn -e <0|1>                    # Enable / disable VPN
-set_vpn -K <0|1>                    # Kill switch (default on)
-set_vpn -R <0|1>                    # 1 = route-all, 0 = split tunnel
-show vpn                            # Show VPN status and config
+# Enable DDNS
+ddns enable 1
+
+# Select provider (0=NoIP, 1=DuckDNS, 2=Selfhost.de)
+ddns provider 1
+
+# NoIP: set hostname, username and password
+ddns hostname myhost.no-ip.org
+ddns token myusername
+ddns password mypassword
+
+# DuckDNS: set subdomain and token
+ddns token 12345-abcde-token
+
+# Selfhost.de: set full hostname and token
+ddns hostname myhost.selfhost.de
+ddns token my-token
+
+# Set poll interval (60–86400 seconds)
+ddns poll 300
+
+# Trigger an immediate update
+ddns update
+
+# Show current DDNS status
+ddns status
 ```
+
+Home Assistant sensors are published automatically (status, provider, hostname, last-update timestamp).
 
 ### Other Network Settings
 
@@ -348,7 +388,7 @@ Lists: `to_esp`, `from_esp`, `to_ap`, `from_ap` — Protocols: `IP`, `TCP`, `UDP
 ### WireGuard VPN
 
 | Command | Description |
-|---------|-------------|
+|---------|-----|--|
 | `show vpn` | VPN status and full configuration |
 | `set_vpn <privkey>` | Set private key (base64) |
 | `set_vpn <pubkey>` | Set peer public key (base64) |
@@ -358,9 +398,22 @@ Lists: `to_esp`, `from_esp`, `to_ap`, `from_ap` — Protocols: `IP`, `TCP`, `UDP
 | `set_vpn -p <port>` | Peer UDP port (default 51820) |
 | `set_vpn -a <seconds>` | Persistent keepalive (0 = disabled) |
 | `set_vpn -k <psk>` | Preshared key (base64, optional) |
-| `set_vpn -e <0\|1>` | Enable / disable VPN |
-| `set_vpn -K <0\|1>` | Kill switch on/off |
-| `set_vpn -R <0\|1>` | 1 = route-all, 0 = split tunnel |
+| `set_vpn -e <0|1>` | Enable / disable VPN |
+| `set_vpn -K <0|1>` | Kill switch on/off |
+| `set_vpn -R <0|1>` | 1 = route-all, 0 = split tunnel |
+
+### Dynamic DNS (CONFIG_DDNS_ENABLED)
+
+| Command | Description |
+|---------|-----|--|
+| `ddns status` | Show current DDNS config and status |
+| `ddns enable <0|1>` | Toggle DDNS |
+| `ddns provider <0|1|2>` | Select provider: 0=NoIP, 1=DuckDNS, 2=Selfhost.de |
+| `ddns hostname <fqdn>` | Set hostname (or subdomain for DuckDNS) |
+| `ddns token <token>` | Set token (DuckDNS/Selfhost) or username (NoIP) |
+| `ddns password <pw>` | Set password (NoIP only) |
+| `ddns poll <seconds>` | Set poll interval (60–86400) |
+| `ddns update` | Trigger an immediate DDNS update |
 
 ### Packet Capture *(CONFIG_PCAP_CAPTURE)*
 
@@ -434,6 +487,23 @@ Lists: `to_esp`, `from_esp`, `to_ap`, `from_ap` — Protocols: `IP`, `TCP`, `UDP
 | `mqtt interval <seconds>` | State publish interval (5–3600 s) |
 | `mqtt rediscover` | Re-publish Home Assistant discovery configs |
 
+Home Assistant auto-discovers these entities (when enabled):
+
+| Entity | Type | Description |
+|---------|---------|-----------|
+| WAN IP | sensor | Current WAN IP address |
+| Up link | binary sensor | Uplink connectivity status |
+| PPPoE | binary sensor | PPPoE session state |
+| Web UI | switch | Enable / disable web interface |
+| Remote Console | switch | Enable / disable remote console |
+| Restart | button | Trigger router restart |
+| DDNS Status | sensor | DDNS enabled/disabled |
+| DDNS Provider | sensor | Current DDNS provider |
+| DDNS Hostname | sensor | Hostname / subdomain |
+| DDNS Last Update | sensor | Timestamp of last successful update |
+
+(All entities publish to the shared router state topic alongside uplink, client count, byte counters, heap, and uptime.)
+
 ---
 
 ## Security
@@ -491,9 +561,10 @@ idf.py build
 ### Build-time Options
 
 | Kconfig symbol | Default | Description |
-|----------------|---------|-------------|
+|-----|---------|-----|
 | `CONFIG_PCAP_CAPTURE` | **off** | Enable live PCAP capture over TCP. Adds ~16–32 KB RAM for the ring buffer and a TCP server task. When off, the `pcap` CLI command and PCAP config page are absent and `allow_monitor`/`deny_monitor` ACL actions are unavailable. |
 | `CONFIG_MQTT_HOMEASSISTANT` | on | Publish router telemetry to an MQTT broker with Home Assistant auto-discovery. Adds ~58 KB flash; RAM is used only when a broker is configured. |
+| `CONFIG_DDNS_ENABLED` | **off** | Enable Dynamic DNS client for automatic WAN IP registration with NoIP, DuckDNS, or Selfhost.de. All three providers are compiled; the default provider is selected at config time. Uses HTTPS (TLS) for all API calls. |
 
 ---
 

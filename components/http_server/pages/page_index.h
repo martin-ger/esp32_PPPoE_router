@@ -181,26 +181,36 @@ font-size: 0.8rem;\
 </table>\
 </div>"
 
-#if !CONFIG_ETH_UPLINK
-#define INDEX_CHUNK_BUTTONS "\
-<div class='button-container'>\
-<a href='/setup' class='nav-button'>🚀 Getting Started</a>\
-<a href='/scan' class='nav-button'>📡 WiFi Scan</a>\
-<a href='/config' class='nav-button'>⚙️ Configuration</a>\
-<a href='/pppoe' class='nav-button'>🔌 PPPoE</a>\
-<a href='/vpn' class='nav-button'>🔒 VPN</a>\
-<a href='/mappings' class='nav-button'>🔀 Mappings</a>\
-<a href='/firewall' class='nav-button'>🛡️ Firewall</a>\
-</div>"
+/* DDNS button: defined as an empty string when the feature is disabled.
+ * Must live outside the string literal so the #if is a real preprocessor directive. */
+#if CONFIG_DDNS_ENABLED
+#define _BTN_DDNS "<a href='/ddns' class='nav-button'>\xf0\x9f\x8c\x90 DDNS</a>"
 #else
-#define INDEX_CHUNK_BUTTONS "\
-<div class='button-container'>\
-<a href='/config' class='nav-button'>⚙️ Configuration</a>\
-<a href='/pppoe' class='nav-button'>🔌 PPPoE</a>\
-<a href='/vpn' class='nav-button'>🔒 VPN</a>\
-<a href='/mappings' class='nav-button'>🔀 Mappings</a>\
-<a href='/firewall' class='nav-button'>🛡️ Firewall</a>\
-</div>"
+#define _BTN_DDNS ""
+#endif
+
+#if !CONFIG_ETH_UPLINK
+#define INDEX_CHUNK_BUTTONS \
+    "<div class='button-container'>" \
+    "<a href='/setup' class='nav-button'>\xf0\x9f\x9a\x80 Getting Started</a>" \
+    "<a href='/scan' class='nav-button'>\xf0\x9f\x93\xa1 WiFi Scan</a>" \
+    "<a href='/config' class='nav-button'>\xe2\x9a\x99\xef\xb8\x8f Configuration</a>" \
+    "<a href='/pppoe' class='nav-button'>\xf0\x9f\x94\x8c PPPoE</a>" \
+    "<a href='/vpn' class='nav-button'>\xf0\x9f\x94\x92 VPN</a>" \
+    _BTN_DDNS \
+    "<a href='/mappings' class='nav-button'>\xf0\x9f\x94\x80 Mappings</a>" \
+    "<a href='/firewall' class='nav-button'>\xf0\x9f\x9b\xa1\xef\xb8\x8f Firewall</a>" \
+    "</div>"
+#else
+#define INDEX_CHUNK_BUTTONS \
+    "<div class='button-container'>" \
+    "<a href='/config' class='nav-button'>\xe2\x9a\x99\xef\xb8\x8f Configuration</a>" \
+    "<a href='/pppoe' class='nav-button'>\xf0\x9f\x94\x8c PPPoE</a>" \
+    "<a href='/vpn' class='nav-button'>\xf0\x9f\x94\x92 VPN</a>" \
+    _BTN_DDNS \
+    "<a href='/mappings' class='nav-button'>\xf0\x9f\x94\x80 Mappings</a>" \
+    "<a href='/firewall' class='nav-button'>\xf0\x9f\x9b\xa1\xef\xb8\x8f Firewall</a>" \
+    "</div>"
 #endif
 /* Auth UI streamed here */
 

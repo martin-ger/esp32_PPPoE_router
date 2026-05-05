@@ -62,6 +62,8 @@ menu "MQTT Home Assistant"
         int "Default publish interval (seconds)"
         default 30
         depends on MQTT_HOMEASSISTANT
-        range 5 3600
+         range 5 3600
 
 endmenu
+
+source "../components/ddns/Kconfig"

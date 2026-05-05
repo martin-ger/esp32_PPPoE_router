@@ -1,10 +1,12 @@
-/* PPPoE page templates */
-/* PPPoE Page - Chunked for streaming */
-#define PPPOE_CHUNK_HEAD "<html>\
+/* DDNS page templates
+ *
+ * SPDX-License-Identifier: MIT
+ */
+#define DDNS_CHUNK_HEAD "<html>\
 <head>\
 <meta name='viewport' content='width=device-width, initial-scale=1, maximum-scale=1, user-scalable=0'>\
 <meta charset='UTF-8'>\
-<title>PPPoE WAN</title>\
+<title>Dynamic DNS</title>\
 <link rel='icon' href='favicon.png'>\
 </head>\
 <style>\
@@ -29,6 +31,9 @@ select option { background: #22262b; color: #e0e0e0; }\
 .status-table td:first-child { color: #888; text-align: right; padding-right: 1rem; width: 45%; font-size: 0.9rem; }\
 .status-table td:last-child { color: #e0e0e0; font-weight: 500; }\
 small { display: block; color: #888; font-size: 0.85rem; margin-top: 0.5rem; line-height: 1.4; }\
+.flash { padding: 0.5rem 0.85rem; border-radius: 8px; margin-bottom: 1rem; font-size: 0.875rem; font-weight: 500; }\
+.flash-ok   { background: rgba(76, 175, 80, 0.14); border: 1px solid rgba(76, 175, 80, 0.32); color: #81c784; }\
+.flash-info { background: rgba(126, 184, 212, 0.12); border: 1px solid rgba(126, 184, 212, 0.28); color: #7eb8d4; }\
 @media (max-width: 600px) { body { padding: 0.5rem; } #container { padding: 1rem; } h1 { font-size: 1.25rem; } h2 { font-size: 1rem; } td:first-child { font-size: 0.8rem; width: 40%; } input[type='text'], input[type='number'], input[type='password'], select { font-size: 0.9rem; padding: 0.65rem; } .ok-button { font-size: 0.9rem; padding: 0.65rem 1.25rem; } }\
 </style>\
 <body>\
@@ -36,33 +41,54 @@ small { display: block; color: #888; font-size: 0.85rem; margin-top: 0.5rem; lin
 <div style='display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem;'>\
 <div style='display: flex; align-items: center;'>\
 <a href='/' style='display: inline-block; margin-right: 1rem;'><img src='/favicon.png' alt='Home' style='width: 64px; height: 64px; border: none;'></a>\
-<h1 style='margin: 0;'>PPPoE WAN</h1>\
+<h1 style='margin: 0;'>Dynamic DNS</h1>\
 </div>"
 
-#define PPPOE_CHUNK_MID "\
+/* Closes the header flex row; script handles flash messages and provider toggle */
+#define DDNS_CHUNK_MID "\
 </div>\
 <script>\
-var qs = window.location.search.substr(1);\
-if (qs.indexOf('pppoe_en=') !== -1 || qs.indexOf('pppoe_user=') !== -1) {\
-document.getElementById('container').style.display = 'none';\
-document.body.innerHTML ='<div id=\"container\"><h1>PPPoE WAN</h1><p style=\"text-align:center; margin: 2rem 0; color: #7eb8d4;\">Settings saved! Rebooting...</p></div>';\
-setTimeout(\"location.href = '/'\", 10000);\
+(function(){\
+var p = new URLSearchParams(window.location.search);\
+function flash(cls, msg) {\
+var d = document.createElement('div');\
+d.className = 'flash ' + cls;\
+d.textContent = msg;\
+var c = document.getElementById('container');\
+c.insertBefore(d, c.children[1]);\
 }\
+if (p.get('saved') === '1')     { flash('flash-ok',   'Settings saved.');   history.replaceState(null, '', '/ddns'); }\
+if (p.get('triggered') === '1') { flash('flash-info', 'Update triggered.'); history.replaceState(null, '', '/ddns'); }\
+function toggleFields() {\
+var v = document.getElementById('ddns_prov').value;\
+var noip = (v === '0'), duck = (v === '1');\
+document.getElementById('row_user').style.display = noip ? '' : 'none';\
+document.getElementById('row_pass').style.display = noip ? '' : 'none';\
+document.getElementById('row_tok').style.display  = noip ? 'none' : '';\
+document.getElementById('lbl_host').textContent   = duck ? 'Subdomain' : 'Hostname';\
+document.getElementById('hint_host').textContent  =\
+duck ? 'Your DuckDNS subdomain \x2014 without .duckdns.org' :\
+noip ? 'Your full NoIP hostname, e.g. myhost.ddns.net' :\
+'Your full Selfhost.de hostname';\
+}\
+document.getElementById('ddns_prov').addEventListener('change', toggleFields);\
+toggleFields();\
+})();\
 </script>"
 
-/* PPPoE form - static wrapper (no format strings) */
-#define PPPOE_CHUNK_FORM_OPEN "\
+#define DDNS_CHUNK_FORM_OPEN "\
 <h2>Configuration</h2>\
-<form action='/pppoe' method='GET'>\
+<form action='/ddns' method='GET'>\
 <table>"
 
-#define PPPOE_CHUNK_FORM_CLOSE "\
-<tr><td></td><td><input type='submit' value='Save &amp; Reboot' class='ok-button'/></td></tr>\
+/* Closes the config form at the Save button; handler appends status + trigger + tail */
+#define DDNS_CHUNK_FORM_CLOSE "\
+<tr><td></td><td><input type='submit' value='Save' class='ok-button'/></td></tr>\
 </table>\
-</form>\
-<div style='margin-top: 1.5rem; text-align: center;'>\
-<a href='/' style='padding: 0.6rem 1.5rem; background: linear-gradient(135deg, #2d6a8f 0%, #1e4d6b 100%); color: #fff; border: none; border-radius: 8px; text-decoration: none; font-size: 0.9rem; font-weight: 600;'>\xf0\x9f\x8f\xa0 Home</a>\
-</div>\
+</form>"
+
+/* Closes #container, body, html — sent after the trigger form and home link */
+#define DDNS_CHUNK_TAIL "\
 </div>\
 </body>\
 </html>"

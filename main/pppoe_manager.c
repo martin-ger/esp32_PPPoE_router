@@ -194,6 +194,10 @@ static void ppp_link_status_cb(ppp_pcb *pcb, int err_code, void *ctx)
         init_byte_counter();
         init_sntp_if_needed();
         syslog_notify_connected();
+#if defined(CONFIG_DDNS_ENABLED) && CONFIG_DDNS_ENABLED
+        extern void ddns_update_wan_ip(uint32_t wan_ip);
+        ddns_update_wan_ip(pppoe_ip);
+#endif
         xEventGroupSetBits(wifi_event_group, WIFI_CONNECTED_BIT);
 
         ESP_LOGI(TAG, "PPPoE connected%s, IP: " IPSTR ", MSS=%u PMTU=%u",

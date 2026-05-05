@@ -1,0 +1,27 @@
+menu "DDNS Dynamic DNS"
+
+    config DDNS_ENABLED
+        bool "DDNS support"
+        default n
+        help
+            Enable Dynamic DNS client for automatic WAN IP registration
+            with NoIP, DuckDNS, or Selfhost.de. All three providers are
+            compiled; selection is at runtime via web/CLI.
+
+    config DDNS_POLL_INTERVAL
+        int "Poll interval in seconds"
+        range 60 86400
+        default 300
+        depends on DDNS_ENABLED
+        help
+            How often to check and update the DDNS record (minimum 60s).
+
+    config DDNS_SAVE_INTERVAL
+        int "Save config to NVS interval in seconds"
+        range 60 3600
+        default 3600
+        depends on DDNS_ENABLED
+        help
+            Periodically persist DDNS config to NVS (prevents loss on crash).
+
+endmenu

@@ -102,6 +102,9 @@ static void register_set_sta_band(void);
 static void register_set_pppoe(void);
 static void register_set_vpn(void);
 static void register_set_tz(void);
+#if CONFIG_DDNS_ENABLED
+static void register_ddns_cmd(void);
+#endif
 
 /* ACL helper functions (forward declarations) */
 static char* acl_format_ip_with_name(uint32_t ip, uint32_t mask, char* buf, size_t buf_len);
@@ -373,6 +376,9 @@ void register_router(void)
     register_set_tz();
     register_set_pppoe();
     register_set_vpn();
+#if CONFIG_DDNS_ENABLED
+    register_ddns_cmd();
+#endif
 }
 
 #if !CONFIG_ETH_UPLINK
@@ -3479,3 +3485,201 @@ static void register_set_pppoe(void)
     };
     ESP_ERROR_CHECK( esp_console_cmd_register(&cmd) );
 }
+
+#if CONFIG_DDNS_ENABLED
+/* ============== DDNS CLI commands ============================= */
+
+static struct {
+    struct arg_str *action;
+    struct arg_str *arg1;
+    struct arg_str *arg2;
+    struct arg_int *enable;
+    struct arg_int *poll;
+    struct arg_end *end;
+} ddns_args;
+
+static int ddns_cmd(int argc, char **argv)
+{
+    int nerrors = arg_parse(argc, argv, (void **)&ddns_args);
+    if (nerrors != 0) {
+        arg_print_errors(stderr, ddns_args.end, argv[0]);
+        return 1;
+    }
+
+    if (ddns_args.action->count == 0) {
+        printf("Usage: ddns <action> [args]\n");
+        printf("Actions:\n");
+        printf("  status              — Show current DDNS config and status\n");
+        printf("  enable <0|1>        — Toggle DDNS\n");
+        printf("  provider <0|1|2>    — Select provider: 0=NoIP, 1=DuckDNS, 2=Selfhost.de\n");
+        printf("  hostname <fqdn>     — Set hostname (or subdomain for DuckDNS)\n");
+        printf("  token <token>       — Set token (DuckDNS/Selfhost) or username (NoIP)\n");
+        printf("  password <pw>       — Set password (NoIP only)\n");
+        printf("  poll <seconds>      — Set poll interval (60-86400)\n");
+        printf("  update              — Trigger immediate update\n");
+        return 0;
+    }
+
+    const char *action = ddns_args.action->sval[0];
+
+    if (strcmp(action, "status") == 0) {
+        char buf[512];
+        ddns_get_status(buf, sizeof(buf));
+        printf("%s\n", buf);
+        return 0;
+    }
+
+    if (strcmp(action, "enable") == 0) {
+        if (ddns_args.enable->count == 0) {
+            printf("Usage: ddns enable <0|1>\n");
+            return 1;
+        }
+        int val = ddns_args.enable->ival[0];
+        if (val < 0 || val > 1) {
+            printf("Error: value must be 0 or 1\n");
+            return 1;
+        }
+        nvs_handle_t h;
+        nvs_open(PARAM_NAMESPACE, NVS_READWRITE, &h);
+        nvs_set_i32(h, "ddns_en", val);
+        nvs_commit(h);
+        nvs_close(h);
+        printf("DDNS %s\n", val ? "enabled" : "disabled");
+        return 0;
+    }
+
+    if (strcmp(action, "provider") == 0) {
+        if (ddns_args.arg1->count == 0) {
+            printf("Usage: ddns provider <0|1|2>\n");
+            printf("  0 = NoIP\n");
+            printf("  1 = DuckDNS\n");
+            printf("  2 = Selfhost.de\n");
+            return 1;
+        }
+        int prov = atoi(ddns_args.arg1->sval[0]);
+        if (prov < 0 || prov > 2) {
+            printf("Error: provider must be 0, 1, or 2\n");
+            return 1;
+        }
+        nvs_handle_t h;
+        nvs_open(PARAM_NAMESPACE, NVS_READWRITE, &h);
+        nvs_set_u8(h, "ddns_prov", (uint8_t)prov);
+        nvs_commit(h);
+        nvs_close(h);
+        printf("DDNS provider set to: %s\n", ddns_get_provider_name(prov));
+        return 0;
+    }
+
+    if (strcmp(action, "hostname") == 0) {
+        if (ddns_args.arg1->count == 0) {
+            printf("Usage: ddns hostname <fqdn>\n");
+            return 1;
+        }
+        /* For DuckDNS, the hostname field stores the subdomain */
+        if (ddns_args.arg1->sval[0][0] == '\0') {
+            printf("Error: hostname cannot be empty\n");
+            return 1;
+        }
+        nvs_handle_t h;
+        nvs_open(PARAM_NAMESPACE, NVS_READWRITE, &h);
+        nvs_set_str(h, "ddns_host", ddns_args.arg1->sval[0]);
+        nvs_commit(h);
+        nvs_close(h);
+        printf("DDNS hostname set: %s\n", ddns_args.arg1->sval[0]);
+        return 0;
+    }
+
+    if (strcmp(action, "token") == 0) {
+        if (ddns_args.arg1->count == 0) {
+            printf("Usage: ddns token <token>\n");
+            return 1;
+        }
+        uint8_t prov = 0;
+        nvs_handle_t h;
+        nvs_open(PARAM_NAMESPACE, NVS_READONLY, &h);
+        nvs_get_u8(h, "ddns_prov", &prov);
+        nvs_close(h);
+        
+        if (prov == DDNS_PROVIDER_NOIP) {
+            /* For NoIP, token field stores username */
+            nvs_open(PARAM_NAMESPACE, NVS_READWRITE, &h);
+            nvs_set_str(h, "ddns_token", ddns_args.arg1->sval[0]);
+            nvs_commit(h);
+            nvs_close(h);
+            printf("DDNS username set: %s\n", ddns_args.arg1->sval[0]);
+        } else {
+            /* For DuckDNS/Selfhost, token is the API token */
+            nvs_open(PARAM_NAMESPACE, NVS_READWRITE, &h);
+            nvs_set_str(h, "ddns_token", ddns_args.arg1->sval[0]);
+            nvs_commit(h);
+            nvs_close(h);
+            printf("DDNS token set\n");
+        }
+        return 0;
+    }
+
+    if (strcmp(action, "password") == 0) {
+        if (ddns_args.arg1->count == 0) {
+            printf("Usage: ddns password <pw>\n");
+            return 1;
+        }
+        nvs_handle_t h;
+        nvs_open(PARAM_NAMESPACE, NVS_READWRITE, &h);
+        nvs_set_str(h, "ddns_pass", ddns_args.arg1->sval[0]);
+        nvs_commit(h);
+        nvs_close(h);
+        printf("DDNS password set\n");
+        return 0;
+    }
+
+    if (strcmp(action, "poll") == 0) {
+        if (ddns_args.arg1->count == 0) {
+            printf("Usage: ddns poll <seconds>\n");
+            return 1;
+        }
+        int interval = atoi(ddns_args.arg1->sval[0]);
+        if (interval < 60 || interval > 86400) {
+            printf("Error: interval must be between 60 and 86400 seconds\n");
+            return 1;
+        }
+        nvs_handle_t h;
+        nvs_open(PARAM_NAMESPACE, NVS_READWRITE, &h);
+        nvs_set_i32(h, "ddns_poll", interval);
+        nvs_commit(h);
+        nvs_close(h);
+        printf("DDNS poll interval set to: %d seconds\n", interval);
+        return 0;
+    }
+
+    if (strcmp(action, "update") == 0) {
+        if (pppoe_ip == 0) {
+            printf("Error: no WAN IP available\n");
+            return 1;
+        }
+        printf("Triggering DDNS update...\n");
+        ddns_trigger_update();
+        return 0;
+    }
+
+    return 0;
+}
+
+static void register_ddns_cmd(void)
+{
+    ddns_args.action = arg_str1(NULL, NULL, "<action>", NULL);
+    ddns_args.arg1   = arg_str0(NULL, NULL, "<arg1>", NULL);
+    ddns_args.arg2   = arg_str0(NULL, NULL, "<arg2>", NULL);
+    ddns_args.enable = arg_int0("e", "enable", "<0|1>", "Enable/disable DDNS");
+    ddns_args.poll   = arg_int0("p", "poll", "<seconds>", "Poll interval");
+    ddns_args.end    = arg_end(3);
+
+    const esp_console_cmd_t cmd = {
+        .command = "ddns",
+        .help = "Dynamic DNS client (NoIP, DuckDNS, Selfhost.de)",
+        .hint = NULL,
+        .func = &ddns_cmd,
+        .argtable = &ddns_args
+    };
+    ESP_ERROR_CHECK( esp_console_cmd_register(&cmd) );
+}
+#endif

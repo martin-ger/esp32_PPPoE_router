@@ -17,3 +17,6 @@
 #include "vpn_config.h"
 #include "acl.h"
 #include "web_password.h"
+#if defined(CONFIG_DDNS_ENABLED) && CONFIG_DDNS_ENABLED
+#include "ddns.h"
+#endif

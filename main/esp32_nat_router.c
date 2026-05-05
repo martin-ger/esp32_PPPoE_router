@@ -71,6 +71,7 @@
 #if CONFIG_MQTT_HOMEASSISTANT
 #include "mqtt_ha.h"
 #endif
+#include "ddns.h"
 
 // Byte counting variables
 uint64_t sta_bytes_sent = 0;
@@ -1509,6 +1510,10 @@ void app_main(void)
 
 #if CONFIG_MQTT_HOMEASSISTANT
     mqtt_ha_init();
+#endif
+
+#if defined(CONFIG_DDNS_ENABLED) && CONFIG_DDNS_ENABLED
+    ddns_init();
 #endif
 
     /* Prompt to be printed before each line.
