@@ -388,7 +388,7 @@ Lists: `to_esp`, `from_esp`, `to_ap`, `from_ap` — Protocols: `IP`, `TCP`, `UDP
 ### WireGuard VPN
 
 | Command | Description |
-|---------|-----|--|
+|---------|-------------|
 | `show vpn` | VPN status and full configuration |
 | `set_vpn <privkey>` | Set private key (base64) |
 | `set_vpn <pubkey>` | Set peer public key (base64) |
@@ -405,7 +405,7 @@ Lists: `to_esp`, `from_esp`, `to_ap`, `from_ap` — Protocols: `IP`, `TCP`, `UDP
 ### Dynamic DNS (CONFIG_DDNS_ENABLED)
 
 | Command | Description |
-|---------|-----|--|
+|---------|-------------|
 | `ddns status` | Show current DDNS config and status |
 | `ddns enable <0|1>` | Toggle DDNS |
 | `ddns provider <0|1|2>` | Select provider: 0=NoIP, 1=DuckDNS, 2=Selfhost.de |
