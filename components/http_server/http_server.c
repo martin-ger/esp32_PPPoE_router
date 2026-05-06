@@ -490,11 +490,13 @@ static char *nvs_export_to_json_robust(bool include_secrets)
         nvs_entry_info_t info;
         nvs_entry_info(it, &info);
 
-        /* Omit WireGuard keys and PPPoE password from plain (unencrypted) exports */
+        /* Omit credentials from plain (unencrypted) exports */
         if (!include_secrets &&
             (strcmp(info.key, "pppoe_pass") == 0 ||
              strcmp(info.key, "vpn_privkey") == 0 ||
-             strcmp(info.key, "vpn_psk") == 0)) {
+             strcmp(info.key, "vpn_psk")     == 0 ||
+             strcmp(info.key, "ddns_token")  == 0 ||
+             strcmp(info.key, "ddns_pass")   == 0)) {
             err = nvs_entry_next(&it);
             continue;
         }
@@ -3279,10 +3281,11 @@ static esp_err_t pppoe_get_handler(httpd_req_t *req)
     httpd_resp_send_chunk(req, PPPOE_CHUNK_FORM_OPEN, HTTPD_RESP_USE_STRLEN);
 
     snprintf(row, PPPOE_BUF_SIZE,
-        "<tr><td>Enabled</td><td><select name='pppoe_en'>"
-        "<option value='1' %s>On</option><option value='0' %s>Off</option>"
-        "</select></td></tr>",
-        pppoe_enabled ? "selected" : "", pppoe_enabled ? "" : "selected");
+        "<tr><td>Enabled</td><td>"
+        "<label class='rl'><input type='radio' name='pppoe_en' value='1' %s> On</label>"
+        "<label class='rl'><input type='radio' name='pppoe_en' value='0' %s> Off</label>"
+        "</td></tr>",
+        pppoe_enabled ? "checked" : "", pppoe_enabled ? "" : "checked");
     httpd_resp_send_chunk(req, row, HTTPD_RESP_USE_STRLEN);
 
     snprintf(row, PPPOE_BUF_SIZE,
@@ -3472,10 +3475,11 @@ static esp_err_t vpn_get_handler(httpd_req_t *req)
     httpd_resp_send_chunk(req, VPN_CHUNK_FORM_OPEN, HTTPD_RESP_USE_STRLEN);
 
     snprintf(row, VPN_BUF_SIZE,
-        "<tr><td>Enabled</td><td><select name='vpn_enabled'>"
-        "<option value='1' %s>On</option><option value='0' %s>Off</option>"
-        "</select></td></tr>",
-        vpn_enabled ? "selected" : "", vpn_enabled ? "" : "selected");
+        "<tr><td>Enabled</td><td>"
+        "<label class='rl'><input type='radio' name='vpn_enabled' value='1' %s> On</label>"
+        "<label class='rl'><input type='radio' name='vpn_enabled' value='0' %s> Off</label>"
+        "</td></tr>",
+        vpn_enabled ? "checked" : "", vpn_enabled ? "" : "checked");
     httpd_resp_send_chunk(req, row, HTTPD_RESP_USE_STRLEN);
 
     snprintf(row, VPN_BUF_SIZE,
@@ -3507,10 +3511,11 @@ static esp_err_t vpn_get_handler(httpd_req_t *req)
     httpd_resp_send_chunk(req, row, HTTPD_RESP_USE_STRLEN);
 
     snprintf(row, VPN_BUF_SIZE,
-        "<tr><td>Kill Switch</td><td><select name='vpn_ks'>"
-        "<option value='1' %s>On</option><option value='0' %s>Off</option>"
-        "</select></td></tr>",
-        vpn_killswitch ? "selected" : "", vpn_killswitch ? "" : "selected");
+        "<tr><td>Kill Switch</td><td>"
+        "<label class='rl'><input type='radio' name='vpn_ks' value='1' %s> On</label>"
+        "<label class='rl'><input type='radio' name='vpn_ks' value='0' %s> Off</label>"
+        "</td></tr>",
+        vpn_killswitch ? "checked" : "", vpn_killswitch ? "" : "checked");
     httpd_resp_send_chunk(req, row, HTTPD_RESP_USE_STRLEN);
 
     snprintf(row, VPN_BUF_SIZE,
@@ -3574,7 +3579,7 @@ static esp_err_t ddns_get_handler(httpd_req_t *req)
 
             if (httpd_query_key_value(qs, "ddns_trigger", param, sizeof(param)) == ESP_OK
                     && strcmp(param, "1") == 0) {
-                ddns_trigger_update();
+                ddns_trigger_update(DDNS_TRIGGER_MANUAL);
                 triggered = true;
                 acted     = true;
             } else if (httpd_query_key_value(qs, "ddns_en", param, sizeof(param)) == ESP_OK) {
@@ -3596,8 +3601,11 @@ static esp_err_t ddns_get_handler(httpd_req_t *req)
                         preprocess_string(param);
                         nvs_set_str(nvs, "ddns_pass", param);
                     }
-                    if (httpd_query_key_value(qs, "ddns_poll", param, sizeof(param)) == ESP_OK)
-                        nvs_set_i32(nvs, "ddns_poll", atoi(param));
+                    if (httpd_query_key_value(qs, "ddns_poll", param, sizeof(param)) == ESP_OK) {
+                        int h = atoi(param);
+                        if (h >= 1 && h <= 168)
+                            nvs_set_i32(nvs, "ddns_poll", h * 3600);
+                    }
                     nvs_commit(nvs);
                     nvs_close(nvs);
                     ddns_reload_config();
@@ -3685,62 +3693,69 @@ static esp_err_t ddns_get_handler(httpd_req_t *req)
     /* Enabled + Provider */
     snprintf(row, sizeof(row),
         "<tr><td>Enabled</td><td>"
-        "<select name='ddns_en'>"
-        "<option value='1'%s>Yes</option>"
-        "<option value='0'%s>No</option>"
-        "</select></td></tr>"
+        "<label class='rl'><input type='radio' name='ddns_en' value='1'%s> On</label>"
+        "<label class='rl'><input type='radio' name='ddns_en' value='0'%s> Off</label>"
+        "</td></tr>"
         "<tr><td>Provider</td><td>"
         "<select id='ddns_prov' name='ddns_prov'>"
         "<option value='0'%s>NoIP</option>"
         "<option value='1'%s>DuckDNS</option>"
         "<option value='2'%s>Selfhost.de</option>"
         "</select></td></tr>",
-        en == 1 ? " selected" : "", en != 1 ? " selected" : "",
+        en == 1 ? " checked" : "", en != 1 ? " checked" : "",
         prov == 0 ? " selected" : "",
         prov == 1 ? " selected" : "",
         prov == 2 ? " selected" : "");
     httpd_resp_send_chunk(req, row, HTTPD_RESP_USE_STRLEN);
 
-    /* Hostname/Subdomain — label and hint updated by JS */
+    /* Hostname/Subdomain — label and hint updated by JS; hidden for Selfhost.de.
+     * Initial display set server-side to avoid a visible flash before JS runs. */
     snprintf(row, sizeof(row),
-        "<tr><td id='lbl_host'>Hostname</td><td>"
+        "<tr id='row_host'%s><td id='lbl_host'>%s</td><td>"
         "<input type='text' name='ddns_host' value='%s' autocomplete='off'/>"
-        "<small id='hint_host'></small>"
+        "<small id='hint_host'>%s</small>"
         "</td></tr>",
-        host);
+        prov == 2 ? " style='display:none'" : "",
+        prov == 1 ? "Subdomain" : "Hostname",
+        host,
+        prov == 1 ? "Your DuckDNS subdomain \xe2\x80\x94 without .duckdns.org"
+                  : "Your full NoIP hostname, e.g. myhost.ddns.net");
     httpd_resp_send_chunk(req, row, HTTPD_RESP_USE_STRLEN);
 
-    /* NoIP: username (token field used as username) */
+    /* NoIP / Selfhost: username (stored in token field) */
     snprintf(row, sizeof(row),
-        "<tr id='row_user'><td>Username</td><td>"
+        "<tr id='row_user'%s><td>Username</td><td>"
         "<input type='text' name='ddns_token' value='%s' autocomplete='username'/>"
         "</td></tr>",
+        prov == 1 ? " style='display:none'" : "",
         token);
     httpd_resp_send_chunk(req, row, HTTPD_RESP_USE_STRLEN);
 
-    /* NoIP: password */
+    /* NoIP / Selfhost: password */
     snprintf(row, sizeof(row),
-        "<tr id='row_pass'><td>Password</td><td>"
+        "<tr id='row_pass'%s><td>Password</td><td>"
         "<input type='password' name='ddns_pass' value='%s' autocomplete='current-password'/>"
         "</td></tr>",
+        prov == 1 ? " style='display:none'" : "",
         pass);
     httpd_resp_send_chunk(req, row, HTTPD_RESP_USE_STRLEN);
 
-    /* DuckDNS / Selfhost: API token */
+    /* DuckDNS: API token */
     snprintf(row, sizeof(row),
-        "<tr id='row_tok'><td>Token</td><td>"
+        "<tr id='row_tok'%s><td>Token</td><td>"
         "<input type='text' name='ddns_token' value='%s' autocomplete='off'/>"
         "</td></tr>",
+        prov != 1 ? " style='display:none'" : "",
         token);
     httpd_resp_send_chunk(req, row, HTTPD_RESP_USE_STRLEN);
 
-    /* Poll interval */
+    /* Keep-alive interval — stored internally as seconds, presented as hours */
     snprintf(row, sizeof(row),
-        "<tr><td>Poll interval</td><td>"
-        "<input type='number' name='ddns_poll' value='%d' min='60' max='86400'/>"
-        "<small>Seconds between IP checks &mdash; 60 to 86400</small>"
+        "<tr><td>Interval</td><td>"
+        "<input type='number' name='ddns_poll' value='%d' min='1' max='168'/>"
+        "<small>Hours between keep-alive registrations &mdash; 1 to 168</small>"
         "</td></tr>",
-        (int)poll_iv);
+        (int)(poll_iv / 3600 > 0 ? poll_iv / 3600 : 1));
     httpd_resp_send_chunk(req, row, HTTPD_RESP_USE_STRLEN);
 
     /* Save button + close config form */

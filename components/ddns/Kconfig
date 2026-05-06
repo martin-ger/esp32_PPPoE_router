@@ -9,12 +9,14 @@ menu "DDNS Dynamic DNS"
             compiled; selection is at runtime via web/CLI.
 
     config DDNS_POLL_INTERVAL
-        int "Poll interval in seconds"
-        range 60 86400
-        default 300
+        int "Keep-alive interval in seconds (compile-time default)"
+        range 3600 604800
+        default 86400
         depends on DDNS_ENABLED
         help
-            How often to check and update the DDNS record (minimum 60s).
+            Compile-time fallback for the keep-alive interval. The web UI and
+            CLI expose this in hours (1-168); this value is always in seconds.
+            Default 86400 (24 h) satisfies NoIP's 30-day keepalive requirement.
 
     config DDNS_SAVE_INTERVAL
         int "Save config to NVS interval in seconds"

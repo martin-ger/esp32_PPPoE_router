@@ -52,7 +52,8 @@ static uint32_t           g_wan_ip        = 0;
 static bool               g_wan_changed   = false;
 static esp_timer_handle_t g_poll_timer    = NULL;
 static bool               g_timer_running = false;
-static volatile bool      g_update_running = false;
+static volatile bool               g_update_running  = false;
+static volatile ddns_trigger_reason_t g_trigger_reason = DDNS_TRIGGER_MANUAL;
 
 /* ---- Helpers ---- */
 
@@ -204,13 +205,9 @@ static esp_err_t ddns_update(uint32_t wan_ip, char *resp, size_t resp_len)
         ESP_LOGI(TAG, "Updating DuckDNS: subdomain=%s ip=%s", g_ddns.hostname, ip_str);
         return duckdns_update(wan_ip, g_ddns.hostname, g_ddns.token, resp, resp_len);
 
-    case DDNS_PROVIDER_SELFSOFT:
-        if (fqdn[0] == '\0') {
-            ESP_LOGW(TAG, "Selfhost: no hostname configured");
-            return ESP_FAIL;
-        }
-        ESP_LOGI(TAG, "Updating Selfhost: host=%s ip=%s", fqdn, ip_str);
-        return selfhost_update(wan_ip, fqdn, g_ddns.token, resp, resp_len);
+    case DDNS_PROVIDER_SELFHOST:
+        ESP_LOGI(TAG, "Updating Selfhost: user=%s ip=%s", g_ddns.token, ip_str);
+        return selfhost_update(wan_ip, fqdn, g_ddns.token, g_ddns.password, resp, resp_len);
 
     default:
         ESP_LOGW(TAG, "Unknown provider %d", g_ddns.provider);
@@ -220,24 +217,39 @@ static esp_err_t ddns_update(uint32_t wan_ip, char *resp, size_t resp_len)
 
 /* ---- Update task (runs HTTP I/O off the tcpip/timer thread) ---- */
 
+static const char *trigger_reason_str(ddns_trigger_reason_t r)
+{
+    switch (r) {
+    case DDNS_TRIGGER_IP_CHANGE: return "ip-change";
+    case DDNS_TRIGGER_KEEPALIVE: return "keep-alive";
+    default:                     return "manual";
+    }
+}
+
 static void ddns_update_task(void *arg)
 {
+    ddns_trigger_reason_t reason = g_trigger_reason;
+    const char *why = trigger_reason_str(reason);
     char resp[128];
     memset(resp, 0, sizeof(resp));
 
     uint32_t ip = g_wan_ip;
+    char ip_str[16];
+    esp_ip4addr_ntoa((esp_ip4_addr_t *)&ip, ip_str, sizeof(ip_str));
+    ESP_LOGI(TAG, "DDNS update [%s]: provider=%s ip=%s",
+             why, g_ddns.provider_name, ip_str);
+
     esp_err_t err = ddns_update(ip, resp, sizeof(resp));
-    if (err == ESP_OK && resp[0] != '\0') {
+    if (err == ESP_OK) {
         g_ddns.last_update = time(NULL);
         g_ddns.saved_ip    = ip;
         ddns_save_config();
-        ESP_LOGI(TAG, "DDNS update successful: %s", resp);
+        ESP_LOGI(TAG, "DDNS [%s] OK: %s", why, resp);
     } else {
-        ESP_LOGE(TAG, "DDNS update failed: error=%s response=%s",
-                 esp_err_to_name(err), resp[0] ? resp : "(empty)");
+        ESP_LOGE(TAG, "DDNS [%s] failed (%s): response='%s'",
+                 why, esp_err_to_name(err), resp[0] ? resp : "(none)");
     }
 
-    g_wan_changed    = false;
     g_update_running = false;
     vTaskDelete(NULL);
 }
@@ -246,12 +258,10 @@ static void ddns_update_task(void *arg)
 
 static void ddns_timer_cb(void *arg)
 {
-    if (!g_ddns.enabled || g_wan_ip == 0 || !g_wan_changed) {
-        ESP_LOGD(TAG, "Timer: skipping (en=%d ip=%lu changed=%d)",
-                 g_ddns.enabled, (unsigned long)g_wan_ip, g_wan_changed);
+    if (!g_ddns.enabled || g_wan_ip == 0) {
         return;
     }
-    ddns_trigger_update();
+    ddns_trigger_update(DDNS_TRIGGER_KEEPALIVE);
 }
 
 /* ---- Public API ---- */
@@ -334,17 +344,17 @@ void ddns_tick(void)
     ESP_LOGD(TAG, "tick called (timer-driven)");
 }
 
-esp_err_t ddns_trigger_update(void)
+esp_err_t ddns_trigger_update(ddns_trigger_reason_t reason)
 {
-    g_wan_changed = true;
-
     if (!g_ddns.enabled || g_wan_ip == 0) return ESP_OK;
 
     if (g_update_running) {
-        ESP_LOGD(TAG, "Update already in progress, skipping");
+        ESP_LOGD(TAG, "DDNS [%s] skipped — update already in progress",
+                 trigger_reason_str(reason));
         return ESP_OK;
     }
 
+    g_trigger_reason = reason;
     g_update_running = true;
     BaseType_t rc = xTaskCreate(ddns_update_task, "ddns_upd", 4096, NULL, 5, NULL);
     if (rc != pdPASS) {
@@ -364,7 +374,7 @@ void ddns_update_wan_ip(uint32_t wan_ip)
     }
 
     if (g_ddns.enabled && g_wan_ip != 0) {
-        ddns_trigger_update();
+        ddns_trigger_update(DDNS_TRIGGER_IP_CHANGE);
     }
 }
 
@@ -405,7 +415,7 @@ void ddns_get_status(char *buf, size_t len)
              "  WAN IP:      %s\n"
              "  Last update: %s\n"
              "  Saved IP:    %s\n"
-             "  Poll:        %lu s",
+             "  Poll:        %lu h",
              g_ddns.enabled ? "enabled" : "disabled",
              g_timer_running ? "timer-running" : "stopped",
              g_ddns.enabled ? g_ddns.provider_name : "N/A",
@@ -413,7 +423,7 @@ void ddns_get_status(char *buf, size_t len)
              ip_str,
              time_str,
              saved_ip_str,
-             (unsigned long)g_ddns.poll_interval);
+             (unsigned long)(g_ddns.poll_interval / 3600));
 }
 
 void ddns_get_status_html(char *buf, size_t len)
@@ -449,14 +459,14 @@ void ddns_get_status_html(char *buf, size_t len)
              "<tr><td>WAN IP</td><td>%s</td></tr>"
              "<tr><td>Last Update</td><td>%s</td></tr>"
              "<tr><td>Saved IP</td><td>%s</td></tr>"
-             "<tr><td>Poll</td><td>%lu s</td></tr>",
+             "<tr><td>Poll</td><td>%lu h</td></tr>",
              g_ddns.enabled ? "enabled" : "disabled",
              g_timer_running ? "running" : "stopped",
              g_ddns.enabled ? g_ddns.provider_name : "N/A",
              ip_str,
              time_str,
              saved_ip_str,
-             (unsigned long)g_ddns.poll_interval);
+             (unsigned long)(g_ddns.poll_interval / 3600));
 }
 
 bool ddns_is_enabled(void)

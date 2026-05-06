@@ -68,13 +68,17 @@ esp_err_t duckdns_update(uint32_t wan_ip, const char *subdomain,
         int body_len = esp_http_client_read_response(client, resp, resp_len - 1);
         if (body_len > 0) {
             resp[body_len] = '\0';
+            /* strip trailing whitespace (DuckDNS appends '\n') */
+            char *end = resp + body_len - 1;
+            while (end >= resp && (*end == '\n' || *end == '\r' || *end == ' '))
+                *end-- = '\0';
         }
 
         if (strcasecmp(resp, "OK") == 0) {
             ESP_LOGI(TAG, "DuckDNS: update successful");
             err = ESP_OK;
-        } else if (strcasecmp(resp, "ERROR") == 0) {
-            ESP_LOGW(TAG, "DuckDNS: error response");
+        } else if (strcasecmp(resp, "KO") == 0) {
+            ESP_LOGE(TAG, "DuckDNS: rejected (KO) — check token and subdomain");
             err = ESP_FAIL;
         } else {
             ESP_LOGW(TAG, "DuckDNS: unexpected response — %s", resp);

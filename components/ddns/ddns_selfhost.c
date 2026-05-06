@@ -20,7 +20,7 @@
 
 static const char *TAG = "ddns_selfhost";
 
-#define SELFSOFT_API_HOST "www.selfhost.de"
+#define SELFHOST_API_HOST "carol.selfhost.de"
 
 static void str_lower(char *s)
 {
@@ -28,28 +28,30 @@ static void str_lower(char *s)
 }
 
 esp_err_t selfhost_update(uint32_t wan_ip, const char *hostname,
-                          const char *token, char *resp, size_t resp_len)
+                          const char *user, const char *pass,
+                          char *resp, size_t resp_len)
 {
-    if (!hostname || !token) {
-        ESP_LOGE(TAG, "Selfhost: missing hostname or token");
+    if (!user || !pass) {
+        ESP_LOGE(TAG, "Selfhost: missing username or password");
         return ESP_ERR_INVALID_ARG;
     }
 
     char ip_str[16];
     esp_ip4addr_ntoa((esp_ip4_addr_t *)&wan_ip, ip_str, sizeof(ip_str));
 
-    /* URL-encode hostname and token to prevent query-param injection */
-    char enc_host[256];
-    char enc_tok[256];
-    url_encode(hostname, enc_host, sizeof(enc_host));
-    url_encode(token,    enc_tok,  sizeof(enc_tok));
+    /* URL-encode credentials to prevent query-param injection */
+    char enc_user[256];
+    char enc_pass[256];
+    url_encode(user, enc_user, sizeof(enc_user));
+    url_encode(pass, enc_pass, sizeof(enc_pass));
 
+    /* hostname=1 requests dyndns.org-compatible response ("good"/"nochg") */
     char url[640];
     snprintf(url, sizeof(url),
-             "https://" SELFSOFT_API_HOST "/nic/update?hostname=%s&myip=%s&system=dnscamp&token=%s",
-             enc_host, ip_str, enc_tok);
+             "https://" SELFHOST_API_HOST "/update?username=%s&password=%s&myip=%s&hostname=1",
+             enc_user, enc_pass, ip_str);
 
-    ESP_LOGI(TAG, "Updating Selfhost.de: host=%s ip=%s", hostname, ip_str);
+    ESP_LOGI(TAG, "Updating Selfhost.de: user=%s ip=%s", user, ip_str);
 
     esp_http_client_config_t config = {
         .url                     = url,
@@ -90,6 +92,12 @@ esp_err_t selfhost_update(uint32_t wan_ip, const char *hostname,
             ESP_LOGW(TAG, "Selfhost: unexpected response — %s", resp);
             err = ESP_FAIL;
         }
+    } else if (err == ESP_OK && status == 401) {
+        ESP_LOGE(TAG, "Selfhost: authentication failed (401) — check username and password");
+        err = ESP_FAIL;
+    } else if (err == ESP_OK && status == 403) {
+        ESP_LOGE(TAG, "Selfhost: account blocked (403)");
+        err = ESP_FAIL;
     } else if (err == ESP_OK) {
         ESP_LOGE(TAG, "Selfhost: HTTP error %d", status);
         err = ESP_FAIL;

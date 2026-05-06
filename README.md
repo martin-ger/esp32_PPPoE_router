@@ -90,7 +90,7 @@ WireGuard configuration: private key, peer public key, optional preshared key, e
 
 **DDNS**
 
-Dynamic DNS configuration page (only shown when built with `CONFIG_DDNS_ENABLED=y`). Provides provider selection (NoIP, DuckDNS, Selfhost.de), hostname/subdomain, credentials or token fields, poll interval, and a "Trigger Update" button for immediate DNS push. Live status (enabled/disabled, provider, last-update timestamp, last-reported WAN IP) is displayed.
+Dynamic DNS configuration page (only shown when built with `CONFIG_DDNS_ENABLED=y`). Provides provider selection (NoIP, DuckDNS, Selfhost.de), hostname/subdomain, credentials or token fields (shown/hidden per provider), keep-alive interval (hours), and a "Trigger Update" button for immediate DNS push. Live status (enabled/disabled, provider, last-update timestamp, last-reported WAN IP) is displayed.
 
 ### Password Protection
 
@@ -187,12 +187,12 @@ Supported providers:
 |------|------|
 | **NoIP** | Username, password, full FQDN |
 | **DuckDNS** | Subdomain name, authentication token |
-| **Selfhost.de** | Full FQDN, authentication token |
+| **Selfhost.de** | Username, password (DynAccount credentials — no hostname needed) |
 
 When DDNS is enabled the router automatically updates the DNS record:
 
-- **Immediately** on every PPPoE connect (IP address change detection)
-- **Periodically** at the configured poll interval (default 300 s) — only pushes if the WAN IP has actually changed
+- **Immediately** on every PPPoE connect
+- **Periodically** at the configured keep-alive interval (default 24 h) — unconditional re-registration regardless of IP change, satisfying NoIP's 30-day keepalive requirement
 
 Configuration is accessed via the web interface (**DDNS** page) or CLI:
 
@@ -211,12 +211,12 @@ ddns password mypassword
 # DuckDNS: set subdomain and token
 ddns token 12345-abcde-token
 
-# Selfhost.de: set full hostname and token
-ddns hostname myhost.selfhost.de
-ddns token my-token
+# Selfhost.de: set username and password (DynAccount credentials)
+ddns token myusername
+ddns password mypassword
 
-# Set poll interval (60–86400 seconds)
-ddns poll 300
+# Set keep-alive interval in hours (1–168, default 24)
+ddns poll 24
 
 # Trigger an immediate update
 ddns update
@@ -410,9 +410,9 @@ Lists: `to_esp`, `from_esp`, `to_ap`, `from_ap` — Protocols: `IP`, `TCP`, `UDP
 | `ddns enable <0|1>` | Toggle DDNS |
 | `ddns provider <0|1|2>` | Select provider: 0=NoIP, 1=DuckDNS, 2=Selfhost.de |
 | `ddns hostname <fqdn>` | Set hostname (or subdomain for DuckDNS) |
-| `ddns token <token>` | Set token (DuckDNS/Selfhost) or username (NoIP) |
-| `ddns password <pw>` | Set password (NoIP only) |
-| `ddns poll <seconds>` | Set poll interval (60–86400) |
+| `ddns token <token>` | Set token (DuckDNS) or username (NoIP/Selfhost.de) |
+| `ddns password <pw>` | Set password (NoIP/Selfhost.de) |
+| `ddns poll <hours>` | Set keep-alive interval (1–168 hours, default 24) |
 | `ddns update` | Trigger an immediate DDNS update |
 
 ### Packet Capture *(CONFIG_PCAP_CAPTURE)*
@@ -497,12 +497,7 @@ Home Assistant auto-discovers these entities (when enabled):
 | Web UI | switch | Enable / disable web interface |
 | Remote Console | switch | Enable / disable remote console |
 | Restart | button | Trigger router restart |
-| DDNS Status | sensor | DDNS enabled/disabled |
-| DDNS Provider | sensor | Current DDNS provider |
-| DDNS Hostname | sensor | Hostname / subdomain |
-| DDNS Last Update | sensor | Timestamp of last successful update |
-
-(All entities publish to the shared router state topic alongside uplink, client count, byte counters, heap, and uptime.)
+(All entities publish to the shared router state topic alongside uplink, client count, byte counters, heap, uptime, and WAN IP.)
 
 ---
 

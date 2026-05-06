@@ -35,6 +35,8 @@ small { display: block; color: #888; font-size: 0.85rem; margin-top: 0.5rem; lin
 .flash-ok   { background: rgba(76, 175, 80, 0.14); border: 1px solid rgba(76, 175, 80, 0.32); color: #81c784; }\
 .flash-info { background: rgba(126, 184, 212, 0.12); border: 1px solid rgba(126, 184, 212, 0.28); color: #7eb8d4; }\
 @media (max-width: 600px) { body { padding: 0.5rem; } #container { padding: 1rem; } h1 { font-size: 1.25rem; } h2 { font-size: 1rem; } td:first-child { font-size: 0.8rem; width: 40%; } input[type='text'], input[type='number'], input[type='password'], select { font-size: 0.9rem; padding: 0.65rem; } .ok-button { font-size: 0.9rem; padding: 0.65rem 1.25rem; } }\
+input[type='radio'] { width: auto; accent-color: #7eb8d4; cursor: pointer; margin-right: 0.35rem; }\
+.rl { margin-right: 1.25rem; cursor: pointer; }\
 </style>\
 <body>\
 <div id='container'>\
@@ -44,7 +46,9 @@ small { display: block; color: #888; font-size: 0.85rem; margin-top: 0.5rem; lin
 <h1 style='margin: 0;'>Dynamic DNS</h1>\
 </div>"
 
-/* Closes the header flex row; script handles flash messages and provider toggle */
+/* Closes the header flex row; script handles flash messages and provider toggle.
+ * toggleFields is deferred to window.load so the form rows exist in the DOM
+ * before the function tries to reference them (chunked streaming). */
 #define DDNS_CHUNK_MID "\
 </div>\
 <script>\
@@ -59,20 +63,22 @@ c.insertBefore(d, c.children[1]);\
 }\
 if (p.get('saved') === '1')     { flash('flash-ok',   'Settings saved.');   history.replaceState(null, '', '/ddns'); }\
 if (p.get('triggered') === '1') { flash('flash-info', 'Update triggered.'); history.replaceState(null, '', '/ddns'); }\
+window.addEventListener('load', function() {\
 function toggleFields() {\
 var v = document.getElementById('ddns_prov').value;\
-var noip = (v === '0'), duck = (v === '1');\
-document.getElementById('row_user').style.display = noip ? '' : 'none';\
-document.getElementById('row_pass').style.display = noip ? '' : 'none';\
-document.getElementById('row_tok').style.display  = noip ? 'none' : '';\
+var noip = (v === '0'), duck = (v === '1'), self = (v === '2');\
+document.getElementById('row_host').style.display = self ? 'none' : '';\
+document.getElementById('row_user').style.display = (noip || self) ? '' : 'none';\
+document.getElementById('row_pass').style.display = (noip || self) ? '' : 'none';\
+document.getElementById('row_tok').style.display  = duck ? '' : 'none';\
 document.getElementById('lbl_host').textContent   = duck ? 'Subdomain' : 'Hostname';\
 document.getElementById('hint_host').textContent  =\
-duck ? 'Your DuckDNS subdomain \x2014 without .duckdns.org' :\
-noip ? 'Your full NoIP hostname, e.g. myhost.ddns.net' :\
-'Your full Selfhost.de hostname';\
+duck ? 'Your DuckDNS subdomain \\u2014 without .duckdns.org' :\
+'Your full NoIP hostname, e.g. myhost.ddns.net';\
 }\
 document.getElementById('ddns_prov').addEventListener('change', toggleFields);\
 toggleFields();\
+});\
 })();\
 </script>"
 

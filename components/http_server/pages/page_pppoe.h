@@ -30,6 +30,8 @@ select option { background: #22262b; color: #e0e0e0; }\
 .status-table td:last-child { color: #e0e0e0; font-weight: 500; }\
 small { display: block; color: #888; font-size: 0.85rem; margin-top: 0.5rem; line-height: 1.4; }\
 @media (max-width: 600px) { body { padding: 0.5rem; } #container { padding: 1rem; } h1 { font-size: 1.25rem; } h2 { font-size: 1rem; } td:first-child { font-size: 0.8rem; width: 40%; } input[type='text'], input[type='number'], input[type='password'], select { font-size: 0.9rem; padding: 0.65rem; } .ok-button { font-size: 0.9rem; padding: 0.65rem 1.25rem; } }\
+input[type='radio'] { width: auto; accent-color: #7eb8d4; cursor: pointer; margin-right: 0.35rem; }\
+.rl { margin-right: 1.25rem; cursor: pointer; }\
 </style>\
 <body>\
 <div id='container'>\

@@ -277,64 +277,6 @@ static void publish_discovery(void)
         "%s}", s_device_id, dev);
     esp_mqtt_client_publish(s_client, topic, payload, 0, 1, 1);
 
-#if CONFIG_DDNS_ENABLED
-    /* sensor: DDNS Status */
-    snprintf(topic, sizeof(topic),
-        "homeassistant/sensor/%s/ddns_status/config", s_device_id);
-    snprintf(payload, sizeof(payload),
-        "{\"name\":\"DDNS Status\","
-        "\"uniq_id\":\"%s_ddns_status\","
-        "\"stat_t\":\"" TOPIC_STATE "\","
-        "\"val_tpl\":\"{{value_json.ddns_enabled}}\","
-        "\"ic\":\"mdi:cloud-sync\","
-        "\"entity_category\":\"diagnostic\","
-        "\"avty_t\":\"" TOPIC_AVAILABILITY "\","
-        "%s}", s_device_id, dev);
-    esp_mqtt_client_publish(s_client, topic, payload, 0, 1, 1);
-
-    /* sensor: DDNS Provider */
-    snprintf(topic, sizeof(topic),
-        "homeassistant/sensor/%s/ddns_provider/config", s_device_id);
-    snprintf(payload, sizeof(payload),
-        "{\"name\":\"DDNS Provider\","
-        "\"uniq_id\":\"%s_ddns_provider\","
-        "\"stat_t\":\"" TOPIC_STATE "\","
-        "\"val_tpl\":\"{{value_json.ddns_provider}}\","
-        "\"ic\":\"mdi:web\","
-        "\"entity_category\":\"diagnostic\","
-        "\"avty_t\":\"" TOPIC_AVAILABILITY "\","
-        "%s}", s_device_id, dev);
-    esp_mqtt_client_publish(s_client, topic, payload, 0, 1, 1);
-
-    /* sensor: DDNS Hostname */
-    snprintf(topic, sizeof(topic),
-        "homeassistant/sensor/%s/ddns_hostname/config", s_device_id);
-    snprintf(payload, sizeof(payload),
-        "{\"name\":\"DDNS Hostname\","
-        "\"uniq_id\":\"%s_ddns_hostname\","
-        "\"stat_t\":\"" TOPIC_STATE "\","
-        "\"val_tpl\":\"{{value_json.ddns_hostname}}\","
-        "\"ic\":\"mdi:domain\","
-        "\"entity_category\":\"diagnostic\","
-        "\"avty_t\":\"" TOPIC_AVAILABILITY "\","
-        "%s}", s_device_id, dev);
-    esp_mqtt_client_publish(s_client, topic, payload, 0, 1, 1);
-
-    /* sensor: DDNS Last Update */
-    snprintf(topic, sizeof(topic),
-        "homeassistant/sensor/%s/ddns_last_update/config", s_device_id);
-    snprintf(payload, sizeof(payload),
-        "{\"name\":\"DDNS Last Update\","
-        "\"uniq_id\":\"%s_ddns_last_update\","
-        "\"stat_t\":\"" TOPIC_STATE "\","
-        "\"val_tpl\":\"{{ value_json.ddns_last_update | timestamp_custom('%%Y-%%m-%%d %%H:%%M') }}\","
-        "\"ic\":\"mdi:clock\","
-        "\"entity_category\":\"diagnostic\","
-        "\"avty_t\":\"" TOPIC_AVAILABILITY "\","
-        "%s}", s_device_id, dev);
-    esp_mqtt_client_publish(s_client, topic, payload, 0, 1, 1);
-#endif
-
     /* button: Restart */
     snprintf(topic, sizeof(topic),
         "homeassistant/button/%s/restart/config", s_device_id);
@@ -495,37 +437,8 @@ static void publish_state(void *arg)
         snprintf(wan_ip_str, sizeof(wan_ip_str), IPSTR, IP2STR((esp_ip4_addr_t *)&pppoe_ip));
     }
 
-#if CONFIG_DDNS_ENABLED
-    extern bool        ddns_is_enabled(void);
-    extern int         ddns_get_current_provider(void);
-    extern const char *ddns_get_provider_name(int index);
-    const char *ddns_enabled_str = ddns_is_enabled() ? "true" : "false";
-    const char *ddns_provider    = ddns_get_provider_name(ddns_get_current_provider());
-#endif
-
     /* Router-level state */
     char payload[512];
-#if defined(CONFIG_DDNS_ENABLED) && CONFIG_DDNS_ENABLED
-    snprintf(payload, sizeof(payload),
-        "{\"uplink\":\"%s\",\"clients\":%u,"
-        "\"bytes_tx\":%" PRIu64 ",\"bytes_rx\":%" PRIu64 ","
-        "\"free_heap\":%" PRIu32 ",\"uptime\":%" PRIu32 ","
-        "\"pppoe\":\"%s\",\"wan_ip\":\"%s\","
-        "\"web_ui\":\"%s\",\"remote_console\":\"%s\","
-        "\"ap_enabled\":\"%s\","
-        "\"ddns_enabled\":\"%s\",\"ddns_provider\":\"%s\"}",
-        ap_connect ? "ON" : "OFF",
-        connect_count,
-        get_sta_bytes_sent(),
-        get_sta_bytes_received(),
-        (uint32_t)esp_get_free_heap_size(),
-        get_uptime_seconds(),
-        pppoe_connected ? "ON" : "OFF", wan_ip_str,
-        is_web_ui_enabled() ? "ON" : "OFF",
-        remote_console_is_enabled() ? "ON" : "OFF",
-        ap_disabled ? "OFF" : "ON",
-        ddns_enabled_str, ddns_provider);
-#else
     snprintf(payload, sizeof(payload),
         "{\"uplink\":\"%s\",\"clients\":%u,"
         "\"bytes_tx\":%" PRIu64 ",\"bytes_rx\":%" PRIu64 ","
@@ -543,7 +456,6 @@ static void publish_state(void *arg)
         is_web_ui_enabled() ? "ON" : "OFF",
         remote_console_is_enabled() ? "ON" : "OFF",
         ap_disabled ? "OFF" : "ON");
-#endif
     esp_mqtt_client_publish(s_client, TOPIC_STATE, payload, 0, 0, 1);
 
     /* Get AP station list for per-client RSSI */

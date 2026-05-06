@@ -15,7 +15,7 @@
 /* ---- Provider IDs ---- */
 #define DDNS_PROVIDER_NOIP      0
 #define DDNS_PROVIDER_DUCKDNS   1
-#define DDNS_PROVIDER_SELFSOFT  2
+#define DDNS_PROVIDER_SELFHOST  2
 
 #define DDNS_MAX_HOSTNAME 128
 #define DDNS_MAX_TOKEN    128
@@ -48,8 +48,15 @@ esp_err_t ddns_load_config(void);
 /** Save DDNS config to NVS. */
 esp_err_t ddns_save_config(void);
 
-/** Update DDNS with the current WAN IP. Call from PPPoE connect callback. */
-esp_err_t ddns_trigger_update(void);
+/** Reason a DDNS update was triggered — used for logging. */
+typedef enum {
+    DDNS_TRIGGER_IP_CHANGE,  /* PPPoE connect / new WAN IP          */
+    DDNS_TRIGGER_KEEPALIVE,  /* periodic timer re-registration       */
+    DDNS_TRIGGER_MANUAL,     /* user-initiated via CLI or web UI     */
+} ddns_trigger_reason_t;
+
+/** Trigger a DDNS update. Pass the reason for accurate log output. */
+esp_err_t ddns_trigger_update(ddns_trigger_reason_t reason);
 
 /** Called periodically to compare WAN IP and update if changed. */
 void ddns_tick(void);

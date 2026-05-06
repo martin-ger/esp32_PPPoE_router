@@ -124,6 +124,12 @@ esp_err_t noip_update(uint32_t wan_ip, const char *hostname,
             ESP_LOGW(TAG, "NoIP: unexpected response — %s", resp);
             err = ESP_FAIL;
         }
+    } else if (err == ESP_OK && status == 401) {
+        ESP_LOGE(TAG, "NoIP: authentication failed (401) — check username and password");
+        err = ESP_FAIL;
+    } else if (err == ESP_OK && status == 403) {
+        ESP_LOGE(TAG, "NoIP: account suspended or abuse detected (403)");
+        err = ESP_FAIL;
     } else if (err == ESP_OK) {
         ESP_LOGE(TAG, "NoIP: HTTP error %d", status);
         err = ESP_FAIL;

@@ -3515,7 +3515,7 @@ static int ddns_cmd(int argc, char **argv)
         printf("  hostname <fqdn>     — Set hostname (or subdomain for DuckDNS)\n");
         printf("  token <token>       — Set token (DuckDNS/Selfhost) or username (NoIP)\n");
         printf("  password <pw>       — Set password (NoIP only)\n");
-        printf("  poll <seconds>      — Set poll interval (60-86400)\n");
+        printf("  poll <hours>        — Set keep-alive interval (1-168 hours)\n");
         printf("  update              — Trigger immediate update\n");
         return 0;
     }
@@ -3634,20 +3634,20 @@ static int ddns_cmd(int argc, char **argv)
 
     if (strcmp(action, "poll") == 0) {
         if (ddns_args.arg1->count == 0) {
-            printf("Usage: ddns poll <seconds>\n");
+            printf("Usage: ddns poll <hours>\n");
             return 1;
         }
-        int interval = atoi(ddns_args.arg1->sval[0]);
-        if (interval < 60 || interval > 86400) {
-            printf("Error: interval must be between 60 and 86400 seconds\n");
+        int hours = atoi(ddns_args.arg1->sval[0]);
+        if (hours < 1 || hours > 168) {
+            printf("Error: interval must be between 1 and 168 hours\n");
             return 1;
         }
         nvs_handle_t h;
         nvs_open(PARAM_NAMESPACE, NVS_READWRITE, &h);
-        nvs_set_i32(h, "ddns_poll", interval);
+        nvs_set_i32(h, "ddns_poll", hours * 3600);
         nvs_commit(h);
         nvs_close(h);
-        printf("DDNS poll interval set to: %d seconds\n", interval);
+        printf("DDNS keep-alive interval set to: %d hours\n", hours);
         return 0;
     }
 
@@ -3657,7 +3657,7 @@ static int ddns_cmd(int argc, char **argv)
             return 1;
         }
         printf("Triggering DDNS update...\n");
-        ddns_trigger_update();
+        ddns_trigger_update(DDNS_TRIGGER_MANUAL);
         return 0;
     }
 

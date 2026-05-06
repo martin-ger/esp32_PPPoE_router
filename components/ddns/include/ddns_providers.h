@@ -34,6 +34,7 @@ esp_err_t noip_update(uint32_t wan_ip, const char *hostname,
 esp_err_t duckdns_update(uint32_t wan_ip, const char *subdomain,
                          const char *token, char *resp, size_t resp_len);
 
-/* Selfhost.de — hostname (FQDN), token */
+/* Selfhost.de — username (in token field), password */
 esp_err_t selfhost_update(uint32_t wan_ip, const char *hostname,
-                          const char *token, char *resp, size_t resp_len);
+                          const char *user, const char *pass,
+                          char *resp, size_t resp_len);

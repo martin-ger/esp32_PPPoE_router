@@ -424,6 +424,12 @@ static void eth_event_handler(void* arg, esp_event_base_t event_base,
             init_byte_counter();
             init_sntp_if_needed();
             syslog_notify_connected();
+#if defined(CONFIG_DDNS_ENABLED) && CONFIG_DDNS_ENABLED
+            {
+                extern void ddns_update_wan_ip(uint32_t wan_ip);
+                ddns_update_wan_ip(event->ip_info.ip.addr);
+            }
+#endif
             xEventGroupSetBits(wifi_event_group, WIFI_CONNECTED_BIT);
         }
     }
@@ -670,7 +676,12 @@ static void wifi_event_handler(void* arg, esp_event_base_t event_base,
 
         // Re-resolve syslog server now that network is up
         syslog_notify_connected();
-
+#if defined(CONFIG_DDNS_ENABLED) && CONFIG_DDNS_ENABLED
+        {
+            extern void ddns_update_wan_ip(uint32_t wan_ip);
+            ddns_update_wan_ip(event->ip_info.ip.addr);
+        }
+#endif
         xEventGroupSetBits(wifi_event_group, WIFI_CONNECTED_BIT);
     }
     else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_AP_START)
