@@ -3187,7 +3187,8 @@ static esp_err_t pppoe_get_handler(httpd_req_t *req)
                         preprocess_string(param);
                         nvs_set_str(nvs, "pppoe_user", param);
                     }
-                    if (httpd_query_key_value(buf, "pppoe_pass", param, sizeof(param)) == ESP_OK) {
+                    if (httpd_query_key_value(buf, "pppoe_pass", param, sizeof(param)) == ESP_OK
+                            && param[0] != '\0') {
                         preprocess_string(param);
                         nvs_set_str(nvs, "pppoe_pass", param);
                     }
@@ -3294,8 +3295,8 @@ static esp_err_t pppoe_get_handler(httpd_req_t *req)
     httpd_resp_send_chunk(req, row, HTTPD_RESP_USE_STRLEN);
 
     snprintf(row, PPPOE_BUF_SIZE,
-        "<tr><td>Password</td><td><input type='password' name='pppoe_pass' value='%s' placeholder='ISP password'/></td></tr>",
-        pppoe_pass ? pppoe_pass : "");
+        "<tr><td>Password</td><td><input type='password' name='pppoe_pass' placeholder='%s'/></td></tr>",
+        (pppoe_pass && pppoe_pass[0]) ? "unchanged" : "ISP password");
     httpd_resp_send_chunk(req, row, HTTPD_RESP_USE_STRLEN);
 
     snprintf(row, PPPOE_BUF_SIZE,
@@ -3370,7 +3371,8 @@ static esp_err_t vpn_get_handler(httpd_req_t *req)
                 if (nvs_open(PARAM_NAMESPACE, NVS_READWRITE, &nvs) == ESP_OK) {
                     nvs_set_i32(nvs, "vpn_enabled", atoi(param));
 
-                    if (httpd_query_key_value(buf, "vpn_privkey", param, sizeof(param)) == ESP_OK) {
+                    if (httpd_query_key_value(buf, "vpn_privkey", param, sizeof(param)) == ESP_OK
+                            && param[0] != '\0') {
                         preprocess_string(param);
                         nvs_set_str(nvs, "vpn_privkey", param);
                     }
@@ -3378,7 +3380,8 @@ static esp_err_t vpn_get_handler(httpd_req_t *req)
                         preprocess_string(param);
                         nvs_set_str(nvs, "vpn_pubkey", param);
                     }
-                    if (httpd_query_key_value(buf, "vpn_psk", param, sizeof(param)) == ESP_OK) {
+                    if (httpd_query_key_value(buf, "vpn_psk", param, sizeof(param)) == ESP_OK
+                            && param[0] != '\0') {
                         preprocess_string(param);
                         nvs_set_str(nvs, "vpn_psk", param);
                     }
@@ -3483,8 +3486,8 @@ static esp_err_t vpn_get_handler(httpd_req_t *req)
     httpd_resp_send_chunk(req, row, HTTPD_RESP_USE_STRLEN);
 
     snprintf(row, VPN_BUF_SIZE,
-        "<tr><td>Private Key</td><td><input type='password' name='vpn_privkey' value='%s' placeholder='Base64 private key'/></td></tr>",
-        vpn_private_key ? vpn_private_key : "");
+        "<tr><td>Private Key</td><td><input type='password' name='vpn_privkey' placeholder='%s'/></td></tr>",
+        (vpn_private_key && vpn_private_key[0]) ? "unchanged" : "Base64 private key");
     httpd_resp_send_chunk(req, row, HTTPD_RESP_USE_STRLEN);
 
     snprintf(row, VPN_BUF_SIZE,
@@ -3493,8 +3496,8 @@ static esp_err_t vpn_get_handler(httpd_req_t *req)
     httpd_resp_send_chunk(req, row, HTTPD_RESP_USE_STRLEN);
 
     snprintf(row, VPN_BUF_SIZE,
-        "<tr><td>Preshared Key</td><td><input type='password' name='vpn_psk' value='%s' placeholder='Optional'/></td></tr>",
-        vpn_preshared_key ? vpn_preshared_key : "");
+        "<tr><td>Preshared Key</td><td><input type='password' name='vpn_psk' placeholder='%s'/></td></tr>",
+        (vpn_preshared_key && vpn_preshared_key[0]) ? "unchanged" : "Optional");
     httpd_resp_send_chunk(req, row, HTTPD_RESP_USE_STRLEN);
 
     snprintf(row, VPN_BUF_SIZE,
@@ -3593,11 +3596,13 @@ static esp_err_t ddns_get_handler(httpd_req_t *req)
                         preprocess_string(param);
                         nvs_set_str(nvs, "ddns_host", param);
                     }
-                    if (httpd_query_key_value(qs, "ddns_token", param, sizeof(param)) == ESP_OK) {
+                    if (httpd_query_key_value(qs, "ddns_token", param, sizeof(param)) == ESP_OK
+                            && param[0] != '\0') {
                         preprocess_string(param);
                         nvs_set_str(nvs, "ddns_token", param);
                     }
-                    if (httpd_query_key_value(qs, "ddns_pass", param, sizeof(param)) == ESP_OK) {
+                    if (httpd_query_key_value(qs, "ddns_pass", param, sizeof(param)) == ESP_OK
+                            && param[0] != '\0') {
                         preprocess_string(param);
                         nvs_set_str(nvs, "ddns_pass", param);
                     }
@@ -3725,28 +3730,28 @@ static esp_err_t ddns_get_handler(httpd_req_t *req)
     /* NoIP / Selfhost: username (stored in token field) */
     snprintf(row, sizeof(row),
         "<tr id='row_user'%s><td>Username</td><td>"
-        "<input type='text' name='ddns_token' value='%s' autocomplete='username'/>"
+        "<input type='text' name='ddns_token' placeholder='%s' autocomplete='username'/>"
         "</td></tr>",
         prov == 1 ? " style='display:none'" : "",
-        token);
+        token[0] ? "unchanged" : "");
     httpd_resp_send_chunk(req, row, HTTPD_RESP_USE_STRLEN);
 
     /* NoIP / Selfhost: password */
     snprintf(row, sizeof(row),
         "<tr id='row_pass'%s><td>Password</td><td>"
-        "<input type='password' name='ddns_pass' value='%s' autocomplete='current-password'/>"
+        "<input type='password' name='ddns_pass' placeholder='%s' autocomplete='current-password'/>"
         "</td></tr>",
         prov == 1 ? " style='display:none'" : "",
-        pass);
+        pass[0] ? "unchanged" : "");
     httpd_resp_send_chunk(req, row, HTTPD_RESP_USE_STRLEN);
 
     /* DuckDNS: API token */
     snprintf(row, sizeof(row),
         "<tr id='row_tok'%s><td>Token</td><td>"
-        "<input type='text' name='ddns_token' value='%s' autocomplete='off'/>"
+        "<input type='password' name='ddns_token' placeholder='%s' autocomplete='off'/>"
         "</td></tr>",
         prov != 1 ? " style='display:none'" : "",
-        token);
+        token[0] ? "unchanged" : "");
     httpd_resp_send_chunk(req, row, HTTPD_RESP_USE_STRLEN);
 
     /* Keep-alive interval — stored internally as seconds, presented as hours */
