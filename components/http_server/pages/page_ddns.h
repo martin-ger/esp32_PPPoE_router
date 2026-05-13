@@ -66,14 +66,17 @@ if (p.get('triggered') === '1') { flash('flash-info', 'Update triggered.'); hist
 window.addEventListener('load', function() {\
 function toggleFields() {\
 var v = document.getElementById('ddns_prov').value;\
-var noip = (v === '0'), duck = (v === '1'), self = (v === '2');\
+var noip = (v === '0'), duck = (v === '1'), self = (v === '2'), dynu = (v === '3'), nc = (v === '4');\
 document.getElementById('row_host').style.display = self ? 'none' : '';\
-document.getElementById('row_user').style.display = (noip || self) ? '' : 'none';\
-document.getElementById('row_pass').style.display = (noip || self) ? '' : 'none';\
+document.getElementById('row_user').style.display = (noip || self || dynu || nc) ? '' : 'none';\
+document.getElementById('row_pass').style.display = (noip || self || dynu || nc) ? '' : 'none';\
 document.getElementById('row_tok').style.display  = duck ? '' : 'none';\
 document.getElementById('lbl_host').textContent   = duck ? 'Subdomain' : 'Hostname';\
 document.getElementById('hint_host').textContent  =\
 duck ? 'Your DuckDNS subdomain \\u2014 without .duckdns.org' :\
+noip ? 'Your full NoIP hostname, e.g. myhost.ddns.net' :\
+dynu ? 'Your full Dynu hostname, e.g. myhost.mynamedomain.com' :\
+nc ? 'host.domain.tld, e.g. home.example.com' :\
 'Your full NoIP hostname, e.g. myhost.ddns.net';\
 }\
 document.getElementById('ddns_prov').addEventListener('change', toggleFields);\

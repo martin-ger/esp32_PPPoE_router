@@ -1,5 +1,5 @@
 idf_component_register(
-    SRCS "ddns_noip.c" "ddns_duckdns.c" "ddns_selfhost.c" "ddns.c"
+    SRCS "ddns_noip.c" "ddns_duckdns.c" "ddns_selfhost.c" "ddns_dynu.c" "ddns_namecheap.c" "ddns.c"
     INCLUDE_DIRS "include" "${CMAKE_SOURCE_DIR}/include" "${CMAKE_SOURCE_DIR}/components/acl/include"
     PRIV_REQUIRES esp_http_client esp_timer nvs_flash esp_wifi mbedtls
 )

@@ -19,7 +19,7 @@ An ESP32-based NAT WAN router for the **[WT32-ETH01](https://github.com/egnor/wt
 - DHCP server with IP reservations, client blocking, and static pool
 - Port forwarding (TCP / UDP) with device-name resolution
 - WireGuard VPN client (route-all or split-tunnel, kill switch, VPN-bound port maps)
-- Dynamic DNS (DDNS) with automatic WAN IP registration — supports NoIP, DuckDNS, and Selfhost.de
+- Dynamic DNS (DDNS) with automatic WAN IP registration — supports NoIP, DuckDNS, Selfhost.de, Dynu, and Namecheap
 - PCAP packet capture streamed to Wireshark over TCP — optional build feature, disabled by default
 - Remote CLI console over TCP (password-protected)
 - Remote syslog forwarding (UDP, RFC 3164)
@@ -90,7 +90,7 @@ WireGuard configuration: private key, peer public key, optional preshared key, e
 
 **DDNS**
 
-Dynamic DNS configuration page (only shown when built with `CONFIG_DDNS_ENABLED=y`). Provides provider selection (NoIP, DuckDNS, Selfhost.de), hostname/subdomain, credentials or token fields (shown/hidden per provider), keep-alive interval (hours), and a "Trigger Update" button for immediate DNS push. Live status (enabled/disabled, provider, last-update timestamp, last-reported WAN IP) is displayed.
+Dynamic DNS configuration page (only shown when built with `CONFIG_DDNS_ENABLED=y`). Provides provider selection (NoIP, DuckDNS, Selfhost.de, Dynu, Namecheap), hostname/subdomain, credentials or token fields (shown/hidden per provider), keep-alive interval (hours), and a "Trigger Update" button for immediate DNS push. Live status (enabled/disabled, provider, last-update timestamp, last-reported WAN IP) is displayed.
 
 ### Password Protection
 
@@ -188,6 +188,8 @@ Supported providers:
 | **NoIP** | Username, password, full FQDN |
 | **DuckDNS** | Subdomain name, authentication token |
 | **Selfhost.de** | Username, password (DynAccount credentials — no hostname needed) |
+| **Dynu** | Username, password (DynAccount credentials — no hostname needed) |
+| **Namecheap** | API key or password, full hostname |
 
 When DDNS is enabled the router automatically updates the DNS record:
 
@@ -200,7 +202,7 @@ Configuration is accessed via the web interface (**DDNS** page) or CLI:
 # Enable DDNS
 ddns enable 1
 
-# Select provider (0=NoIP, 1=DuckDNS, 2=Selfhost.de)
+# Select provider (0=NoIP, 1=DuckDNS, 2=Selfhost.de, 3=Dynu, 4=Namecheap)
 ddns provider 1
 
 # NoIP: set hostname, username and password
@@ -215,7 +217,13 @@ ddns token 12345-abcde-token
 ddns token myusername
 ddns password mypassword
 
-# Set keep-alive interval in hours (1–168, default 24)
+# Dynu: set username and password (DynAccount credentials)
+ddns token myusername
+ddns password mypassword
+
+# Namecheap: set hostname and API key or password
+ddns hostname example.com
+ddns token my-api-key-or-password
 ddns poll 24
 
 # Trigger an immediate update
@@ -408,10 +416,10 @@ Lists: `to_esp`, `from_esp`, `to_ap`, `from_ap` — Protocols: `IP`, `TCP`, `UDP
 |---------|-------------|
 | `ddns status` | Show current DDNS config and status |
 | `ddns enable <0|1>` | Toggle DDNS |
-| `ddns provider <0|1|2>` | Select provider: 0=NoIP, 1=DuckDNS, 2=Selfhost.de |
+| `ddns provider <0-4>` | Select provider: 0=NoIP, 1=DuckDNS, 2=Selfhost.de, 3=Dynu, 4=Namecheap |
 | `ddns hostname <fqdn>` | Set hostname (or subdomain for DuckDNS) |
-| `ddns token <token>` | Set token (DuckDNS) or username (NoIP/Selfhost.de) |
-| `ddns password <pw>` | Set password (NoIP/Selfhost.de) |
+| `ddns token <token>` | Set token (DuckDNS), username (NoIP/Selfhost.de/Dynu), or API key/password (Namecheap) |
+| `ddns password <pw>` | Set password (NoIP/Selfhost.de/Dynu) |
 | `ddns poll <hours>` | Set keep-alive interval (1–168 hours, default 24) |
 | `ddns update` | Trigger an immediate DDNS update |
 
@@ -559,7 +567,7 @@ idf.py build
 |-----|---------|-----|
 | `CONFIG_PCAP_CAPTURE` | **off** | Enable live PCAP capture over TCP. Adds ~16–32 KB RAM for the ring buffer and a TCP server task. When off, the `pcap` CLI command and PCAP config page are absent and `allow_monitor`/`deny_monitor` ACL actions are unavailable. |
 | `CONFIG_MQTT_HOMEASSISTANT` | on | Publish router telemetry to an MQTT broker with Home Assistant auto-discovery. Adds ~58 KB flash; RAM is used only when a broker is configured. |
-| `CONFIG_DDNS_ENABLED` | **off** | Enable Dynamic DNS client for automatic WAN IP registration with NoIP, DuckDNS, or Selfhost.de. All three providers are compiled; the default provider is selected at config time. Uses HTTPS (TLS) for all API calls. |
+| `CONFIG_DDNS_ENABLED` | **off** | Enable Dynamic DNS client for automatic WAN IP registration with NoIP, DuckDNS, Selfhost.de, Dynu, or Namecheap. All five providers are compiled; the default provider is selected at config time. Uses HTTPS (TLS) for all API calls. |
 
 ---
 

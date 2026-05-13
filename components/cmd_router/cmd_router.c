@@ -3550,14 +3550,16 @@ static int ddns_cmd(int argc, char **argv)
 
     if (strcmp(action, "provider") == 0) {
         if (ddns_args.arg1->count == 0) {
-            printf("Usage: ddns provider <0|1|2>\n");
+            printf("Usage: ddns provider <0|1|2|3|4>\n");
             printf("  0 = NoIP\n");
             printf("  1 = DuckDNS\n");
             printf("  2 = Selfhost.de\n");
+            printf("  3 = Dynu\n");
+            printf("  4 = Namecheap\n");
             return 1;
         }
         int prov = atoi(ddns_args.arg1->sval[0]);
-        if (prov < 0 || prov > 2) {
+        if (prov < 0 || prov > 4) {
             printf("Error: provider must be 0, 1, or 2\n");
             return 1;
         }

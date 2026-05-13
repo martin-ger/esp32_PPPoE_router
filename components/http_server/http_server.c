@@ -3705,13 +3705,23 @@ static esp_err_t ddns_get_handler(httpd_req_t *req)
         "<select id='ddns_prov' name='ddns_prov'>"
         "<option value='0'%s>NoIP</option>"
         "<option value='1'%s>DuckDNS</option>"
-        "<option value='2'%s>Selfhost.de</option>"
-        "</select></td></tr>",
-        en == 1 ? " checked" : "", en != 1 ? " checked" : "",
-        prov == 0 ? " selected" : "",
-        prov == 1 ? " selected" : "",
-        prov == 2 ? " selected" : "");
+         "<option value='2'%s>Selfhost.de</option>"
+         "<option value='3'%s>Dynu</option>"
+         "<option value='4'%s>Namecheap</option>"
+         "</select></td></tr>",
+         en == 1 ? " checked" : "", en != 1 ? " checked" : "",
+         prov == 0 ? " selected" : "",
+         prov == 1 ? " selected" : "",
+         prov == 2 ? " selected" : "",
+         prov == 3 ? " selected" : "",
+         prov == 4 ? " selected" : "");
     httpd_resp_send_chunk(req, row, HTTPD_RESP_USE_STRLEN);
+    /* Provider booleans for conditional display */
+    bool noip      = (prov == 0);
+    bool duckdns   = (prov == 1);
+    bool selfhost  = (prov == 2);
+    bool dynu      = (prov == 3);
+    bool namecheap = (prov == 4);
 
     /* Hostname/Subdomain — label and hint updated by JS; hidden for Selfhost.de.
      * Initial display set server-side to avoid a visible flash before JS runs. */
@@ -3720,37 +3730,41 @@ static esp_err_t ddns_get_handler(httpd_req_t *req)
         "<input type='text' name='ddns_host' value='%s' autocomplete='off'/>"
         "<small id='hint_host'>%s</small>"
         "</td></tr>",
-        prov == 2 ? " style='display:none'" : "",
-        prov == 1 ? "Subdomain" : "Hostname",
-        host,
-        prov == 1 ? "Your DuckDNS subdomain \xe2\x80\x94 without .duckdns.org"
-                  : "Your full NoIP hostname, e.g. myhost.ddns.net");
+        selfhost ? " style='display:none'" : "",
+         duckdns ? "Subdomain" : "Hostname",
+         host,
+         duckdns ? "Your DuckDNS subdomain \xe2\x80\x94 without .duckdns.org"
+                   : noip ? "Your full NoIP hostname, e.g. myhost.ddns.net"
+                   : dynu ? "Your full Dynu hostname, e.g. myhost.mynamedomain.com"
+                   : namecheap ? "host.domain.tld, e.g. home.example.com"
+                   : "Your full NoIP hostname, e.g. myhost.ddns.net");
+    /* Initial label set by JS; no default needed (all providers except Selfhost.de have a host). */
     httpd_resp_send_chunk(req, row, HTTPD_RESP_USE_STRLEN);
 
-    /* NoIP / Selfhost: username (stored in token field) */
+    /* Username (stored in token field) — visible for NoIP, Dynu, Namecheap */
     snprintf(row, sizeof(row),
         "<tr id='row_user'%s><td>Username</td><td>"
         "<input type='text' name='ddns_token' placeholder='%s' autocomplete='username'/>"
         "</td></tr>",
-        prov == 1 ? " style='display:none'" : "",
+        duckdns ? " style='display:none'" : "",
         token[0] ? "unchanged" : "");
     httpd_resp_send_chunk(req, row, HTTPD_RESP_USE_STRLEN);
 
-    /* NoIP / Selfhost: password */
+    /* Password */
     snprintf(row, sizeof(row),
         "<tr id='row_pass'%s><td>Password</td><td>"
         "<input type='password' name='ddns_pass' placeholder='%s' autocomplete='current-password'/>"
         "</td></tr>",
-        prov == 1 ? " style='display:none'" : "",
+        duckdns ? " style='display:none'" : "",
         pass[0] ? "unchanged" : "");
     httpd_resp_send_chunk(req, row, HTTPD_RESP_USE_STRLEN);
 
-    /* DuckDNS: API token */
+    /* DuckDNS: API token — only DuckDNS needs a separate token field */
     snprintf(row, sizeof(row),
         "<tr id='row_tok'%s><td>Token</td><td>"
         "<input type='password' name='ddns_token' placeholder='%s' autocomplete='off'/>"
         "</td></tr>",
-        prov != 1 ? " style='display:none'" : "",
+        duckdns ? "" : " style='display:none'",
         token[0] ? "unchanged" : "");
     httpd_resp_send_chunk(req, row, HTTPD_RESP_USE_STRLEN);
 

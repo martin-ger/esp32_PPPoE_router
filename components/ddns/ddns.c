@@ -43,7 +43,7 @@ static const char *TAG = "ddns";
 #define DDNS_NVS_KEY_LAST_UPD  "ddns_last_upd"
 
 /* ---- Provider names ---- */
-static const char *s_provider_names[] = { "NoIP", "DuckDNS", "Selfhost.de" };
+static const char *s_provider_names[] = { "NoIP", "DuckDNS", "Selfhost.de", "Dynu", "Namecheap" };
 #define DDNS_PROVIDER_COUNT (sizeof(s_provider_names) / sizeof(s_provider_names[0]))
 
 /* ---- Internal state ---- */
@@ -208,6 +208,22 @@ static esp_err_t ddns_update(uint32_t wan_ip, char *resp, size_t resp_len)
     case DDNS_PROVIDER_SELFHOST:
         ESP_LOGI(TAG, "Updating Selfhost: user=%s ip=%s", g_ddns.token, ip_str);
         return selfhost_update(wan_ip, fqdn, g_ddns.token, g_ddns.password, resp, resp_len);
+
+    case DDNS_PROVIDER_DYNU:
+        if (fqdn[0] == '\0') {
+            ESP_LOGW(TAG, "Dynu: no hostname configured");
+            return ESP_FAIL;
+        }
+        ESP_LOGI(TAG, "Updating Dynu: host=%s ip=%s", fqdn, ip_str);
+        return dynu_update(wan_ip, fqdn, g_ddns.token, g_ddns.password, resp, resp_len);
+
+    case DDNS_PROVIDER_NAMECHEAP:
+        if (fqdn[0] == '\0') {
+            ESP_LOGW(TAG, "Namecheap: no FQDN configured");
+            return ESP_FAIL;
+        }
+        ESP_LOGI(TAG, "Updating Namecheap: host=%s domain=%s ip=%s", fqdn, g_ddns.hostname, ip_str);
+        return namecheap_update(wan_ip, fqdn, g_ddns.password, resp, resp_len);
 
     default:
         ESP_LOGW(TAG, "Unknown provider %d", g_ddns.provider);
@@ -486,8 +502,8 @@ int ddns_get_provider_count(void)
 
 int ddns_get_provider_index(const char *name)
 {
-    const char *known[] = { "NoIP", "DuckDNS", "Selfhost.de" };
-    for (int i = 0; i < 3; i++) {
+    const char *known[] = { "NoIP", "DuckDNS", "Selfhost.de", "Dynu", "Namecheap" };
+    for (int i = 0; i < 5; i++) {
         if (strcmp(name, known[i]) == 0) return i;
     }
     return -1;
@@ -495,7 +511,7 @@ int ddns_get_provider_index(const char *name)
 
 const char *ddns_get_provider_name(int index)
 {
-    if (index < 0 || index >= 3) return "Unknown";
+    if (index < 0 || index >= DDNS_PROVIDER_COUNT) return "Unknown";
     return s_provider_names[index];
 }
 

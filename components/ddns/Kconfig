@@ -5,8 +5,8 @@ menu "DDNS Dynamic DNS"
         default n
         help
             Enable Dynamic DNS client for automatic WAN IP registration
-            with NoIP, DuckDNS, or Selfhost.de. All three providers are
-            compiled; selection is at runtime via web/CLI.
+            with NoIP, DuckDNS, Selfhost.de, Dynu, and Namecheap. All
+            providers are compiled; selection is at runtime via web/CLI.
 
     config DDNS_POLL_INTERVAL
         int "Keep-alive interval in seconds (compile-time default)"
