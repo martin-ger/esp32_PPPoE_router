@@ -1510,7 +1510,7 @@ static esp_err_t config_get_handler(httpd_req_t *req)
                     // Handle AP channel setting (ETH_UPLINK only)
                     if (httpd_query_key_value(buf, "ap_channel", param5, sizeof(param5)) == ESP_OK) {
                         int channel_val = atoi(param5);
-                        if (channel_val >= 0 && channel_val <= 13) {
+                        if (channel_val >= 0 && channel_val <= wifi_country_max_channel(wifi_country_code)) {
                             set_config_param_int("ap_channel", channel_val);
                             ap_channel = (uint8_t)channel_val;
                             ESP_LOGI(TAG, "AP channel set to: %d", channel_val);
@@ -1884,10 +1884,13 @@ static esp_err_t config_get_handler(httpd_req_t *req)
     const char* auth_sel0 = (ap_authmode == 0) ? "selected" : "";
     const char* auth_sel1 = (ap_authmode == 1) ? "selected" : "";
     const char* auth_sel2 = (ap_authmode == 2) ? "selected" : "";
+#if CONFIG_ETH_UPLINK
+    int max_channel = wifi_country_max_channel(wifi_country_code);
+#endif
     snprintf(section, sizeof(section), CONFIG_CHUNK_AP,
         safe_ap_ssid, ap_ip_str, ap_dns ? ap_dns : "", ap_mac_str,
 #if CONFIG_ETH_UPLINK
-        (int)ap_channel,
+        max_channel, (int)ap_channel, max_channel,
 #endif
         auth_sel0, auth_sel1, auth_sel2,
         ap_nat_enabled ? "checked" : "",

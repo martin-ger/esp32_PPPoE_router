@@ -27,6 +27,7 @@ An ESP32-based NAT WAN router for the **[WT32-ETH01](https://github.com/egnor/wt
 - Configuration backup / restore via web interface (plain JSON or passphrase-encrypted)
 - Optional per-client traffic statistics
 - TTL override and TCP MSS clamping
+- WiFi regulatory country code — sets the allowed channel range (FCC/ETSI/TELEC)
 
 ---
 
@@ -61,7 +62,7 @@ Live dashboard showing uplink state, uplink IP, byte counters, NAPT table usage,
 
 Full router configuration, split into sections:
 
-- AP settings (SSID, password, channel, auth mode, hidden SSID, IP range, MAC)
+- AP settings (SSID, password, channel, auth mode, hidden SSID, IP range, MAC) — channel maximum is enforced based on the configured country code
 - STA / uplink mode and settings (static IP)
 - Remote console settings (port, timeout)
 - PCAP monitoring settings (mode, snaplen) — only shown when built with `CONFIG_PCAP_CAPTURE`
@@ -138,8 +139,9 @@ set_ap_ip <ip>                                 # Change AP subnet (e.g. 192.168.
 set_ap_dns <ip>                                # Custom DNS for clients (empty = upstream)
 set_ap_auth <wpa2|wpa3|wpa2wpa3>              # Auth mode (requires restart)
 set_ap_hidden <on|off>                         # Hide SSID (requires restart)
-set_ap_channel <0-13>                          # 0 = auto (requires restart)
+set_ap_channel <0-N>                           # 0 = auto; max N depends on country (requires restart)
 set_ap_nat <on|off>                            # Enable / disable NAT (requires restart)
+set_wifi_country <CC>                          # WiFi country code (2-char ISO 3166, e.g. US, DE; 01 = world-safe)
 ap <enable|disable>                            # Enable or disable AP immediately
 ```
 
@@ -244,6 +246,7 @@ set_ap_mac <xx:xx:xx:xx:xx:xx>               # Override AP MAC
 set_hostname <name>                           # DHCP client hostname (max 32 chars)
 set_ttl <0-255>                               # TTL override (0 = disabled)
 set_tx_power <2-20|0>                         # WiFi TX power in dBm (0 = max/default)
+set_wifi_country <CC>                         # WiFi country code (e.g. US, DE, JP; 01 = world-safe)
 ```
 
 ### Firewall
@@ -354,7 +357,8 @@ Connect to the serial console at **115200 bps** or via the remote console.
 | `set_ap_nat <on\|off>` | Enable / disable NAT (restart required) |
 | `set_ap_hidden <on\|off>` | Hide AP SSID (restart required) |
 | `set_ap_auth <mode>` | AP auth: wpa2, wpa3, wpa2wpa3 (restart required) |
-| `set_ap_channel <0-13>` | AP WiFi channel (0=auto, restart required) |
+| `set_ap_channel <0-N>` | AP WiFi channel (0=auto, max N by country, restart required) |
+| `set_wifi_country <CC>` | WiFi country code (2-char ISO 3166 or `01` for world-safe); sets allowed channel range — `US`/`CA`/`01`: 1–11, most others: 1–13, `JP`: 1–14 |
 | `set_hostname [name]` | DHCP client hostname (empty = default) |
 | `set_ttl [0-255]` | TTL override for upstream packets (0=off) |
 | `set_tx_power [2-20\|0]` | WiFi AP TX power in dBm (0=max, applies immediately) |

@@ -92,6 +92,24 @@ extern bool ap_disabled;
 // AP NAT mode (1 = NAT enabled (default), 0 = routed/no NAT; persisted in NVS as "ap_nat")
 extern uint8_t ap_nat_enabled;
 
+// WiFi regulatory country code ("01" = world-safe default; 2-char ISO 3166 + NUL)
+extern char wifi_country_code[3];
+
+// Returns the highest allowed WiFi channel for the given 2-char country code.
+// JP: 14; US/CA/AU/NZ/MX/BR/world(01): 11; all others: 13.
+static inline int wifi_country_max_channel(const char *cc)
+{
+    if (cc[0] == 'J' && cc[1] == 'P') return 14;
+    if ((cc[0] == '0' && cc[1] == '1') ||
+        (cc[0] == 'U' && cc[1] == 'S') ||
+        (cc[0] == 'C' && cc[1] == 'A') ||
+        (cc[0] == 'A' && cc[1] == 'U') ||
+        (cc[0] == 'N' && cc[1] == 'Z') ||
+        (cc[0] == 'M' && cc[1] == 'X') ||
+        (cc[0] == 'B' && cc[1] == 'R')) return 11;
+    return 13;
+}
+
 // Dynamically enable or disable the AP interface (persists to NVS)
 void ap_set_enabled(bool enabled);
 

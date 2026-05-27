@@ -60,10 +60,10 @@ setTimeout(\"location.href = '/'\", 10000);\
 </script>"
 
 /* AP Settings section - uses %s for: ap_ssid, ap_ip, ap_dns, ap_mac, ap_en_checked, open_checked, hidden_checked */
-/* ETH_UPLINK builds add an extra %d for ap_channel */
+/* ETH_UPLINK builds add two extra %d for max_channel and ap_channel */
 #if CONFIG_ETH_UPLINK
 #define CONFIG_CHUNK_AP_CHANNEL_ROW \
-"<tr><td>Channel</td><td><input type='number' name='ap_channel' min='0' max='13' value='%d' style='width:4em'/> <span style='color:#888;font-size:0.85rem;'>(0 = auto)</span></td></tr>"
+"<tr><td>Channel</td><td><input type='number' name='ap_channel' min='0' max='%d' value='%d' style='width:4em'/> <span style='color:#888;font-size:0.85rem;'>(0 = auto, 1&ndash;%d for current country)</span></td></tr>"
 #else
 #define CONFIG_CHUNK_AP_CHANNEL_ROW ""
 #endif
