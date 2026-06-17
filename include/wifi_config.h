@@ -85,6 +85,12 @@ int set_sta_static(int argc, char **argv);
 int set_ap(int argc, char **argv);
 int set_ap_mac(int argc, char **argv);
 int set_ap_ip(int argc, char **argv);
+int set_hostname(int argc, char **argv);
+
+// Effective DNS for AP clients: VPN DNS (while VPN enabled) overrides the manual
+// ap_dns override, which overrides the upstream-supplied DNS. Returns NULL when
+// neither override is set so callers fall back to the upstream/captive default.
+const char* effective_ap_dns(void);
 
 // AP disable flag (persisted in NVS as "ap_disabled")
 extern bool ap_disabled;

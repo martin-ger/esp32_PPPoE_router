@@ -214,6 +214,18 @@ static bool check_csrf(httpd_req_t *req)
     if (httpd_req_get_hdr_value_str(req, "Origin", origin, sizeof(origin)) != ESP_OK) {
         return true;  /* No Origin — non-browser or same-origin fetch, allow */
     }
+    /* Same-origin check: the Origin host[:port] must equal the Host header the
+     * browser used to reach us. This covers access by mDNS hostname
+     * (e.g. http://esp32.local) or a non-default port, which the IP checks below
+     * would miss. A cross-site attacker's Origin won't match our Host, so it's
+     * still rejected. */
+    char host[64];
+    if (httpd_req_get_hdr_value_str(req, "Host", host, sizeof(host)) == ESP_OK) {
+        char expected_host[72];
+        snprintf(expected_host, sizeof(expected_host), "http://%s", host);
+        if (strcmp(origin, expected_host) == 0) return true;
+    }
+
     char expected[32];
     ip4_addr_t addr;
 
@@ -291,8 +303,11 @@ static esp_err_t create_session(httpd_req_t *req)
     session_expiry_time = esp_timer_get_time() + SESSION_TIMEOUT_US;
 
     // Set cookie in response (using static buffer because httpd stores pointer)
+    /* Max-Age makes this a persistent cookie (matching SESSION_TIMEOUT_US) so it
+     * survives page reloads and the iOS captive-portal browser, which discards
+     * session-only cookies aggressively. */
     snprintf(session_cookie_header, sizeof(session_cookie_header),
-             "session=%s; Path=/; SameSite=Strict", current_session_token);
+             "session=%s; Path=/; Max-Age=1800; SameSite=Strict", current_session_token);
     httpd_resp_set_hdr(req, "Set-Cookie", session_cookie_header);
 
     ESP_LOGI(TAG, "Session created, expires in 30 minutes");
@@ -819,6 +834,64 @@ static httpd_uri_t config_importp = {
     .handler   = config_import_handler,
 };
 
+/* --- WireGuard .conf import handler --- */
+
+static esp_err_t vpn_import_handler(httpd_req_t *req)
+{
+    if (!check_csrf(req)) {
+        { char _ip[16]; ESP_LOGW(TAG, "CSRF rejected /api/vpn-import from %s", get_client_ip(req, _ip, sizeof(_ip))); }
+        httpd_resp_send_err(req, HTTPD_403_FORBIDDEN, "CSRF check failed");
+        return ESP_FAIL;
+    }
+    if (is_web_password_set() && !is_authenticated(req)) {
+        { char _ip[16]; ESP_LOGW(TAG, "Unauthenticated access to /api/vpn-import from %s", get_client_ip(req, _ip, sizeof(_ip))); }
+        httpd_resp_send_err(req, HTTPD_403_FORBIDDEN, "Not authenticated");
+        return ESP_FAIL;
+    }
+
+    if (req->content_len == 0 || req->content_len > 4096) {
+        httpd_resp_set_type(req, "application/json");
+        httpd_resp_send(req, "{\"ok\":false,\"msg\":\"Invalid body size\"}", HTTPD_RESP_USE_STRLEN);
+        return ESP_OK;
+    }
+
+    char *body = malloc(req->content_len + 1);
+    if (!body) {
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Out of memory");
+        return ESP_FAIL;
+    }
+
+    int total = 0;
+    while (total < req->content_len) {
+        int ret = httpd_req_recv(req, body + total, req->content_len - total);
+        if (ret <= 0) {
+            free(body);
+            if (ret == HTTPD_SOCK_ERR_TIMEOUT) httpd_resp_send_408(req);
+            return ESP_FAIL;
+        }
+        total += ret;
+    }
+    body[total] = '\0';
+
+    esp_err_t err = vpn_import_conf(body);
+    free(body);
+
+    httpd_resp_set_type(req, "application/json");
+    if (err == ESP_OK) {
+        httpd_resp_send(req, "{\"ok\":true,\"msg\":\"WireGuard config imported. Rebooting...\"}", HTTPD_RESP_USE_STRLEN);
+        esp_timer_start_once(restart_timer, 3000000);
+    } else {
+        httpd_resp_send(req, "{\"ok\":false,\"msg\":\"Import failed: need PrivateKey, PublicKey, Endpoint and Address\"}", HTTPD_RESP_USE_STRLEN);
+    }
+    return ESP_OK;
+}
+
+static httpd_uri_t vpn_importp = {
+    .uri       = "/api/vpn-import",
+    .method    = HTTP_POST,
+    .handler   = vpn_import_handler,
+};
+
 /* --- OTA Firmware Upload handler --- */
 
 static esp_err_t ota_upload_handler(httpd_req_t *req)
@@ -1037,11 +1110,34 @@ static esp_err_t index_get_handler(httpd_req_t *req)
     bool authenticated = false;
     bool password_protection_enabled = is_web_password_set();
 
-    /* Get query string if any */
-    buf_len = httpd_req_get_url_query_len(req) + 1;
-    if (buf_len > 1) {
-        buf = malloc(buf_len);
-        if (buf != NULL && httpd_req_get_url_query_str(req, buf, buf_len) == ESP_OK) {
+    /* The login/password forms POST their fields (keeps the password out of the
+     * URL); nav links and logout use GET query params. Both arrive as
+     * key=value&key=value, so httpd_query_key_value() parses either. */
+    if (req->method == HTTP_POST) {
+        if (req->content_len > 0 && req->content_len < 1024) {
+            buf = malloc(req->content_len + 1);
+            if (buf != NULL) {
+                int recv_len = httpd_req_recv(req, buf, req->content_len);
+                if (recv_len > 0) {
+                    buf[recv_len] = '\0';
+                } else {
+                    free(buf);
+                    buf = NULL;
+                }
+            }
+        }
+    } else {
+        buf_len = httpd_req_get_url_query_len(req) + 1;
+        if (buf_len > 1) {
+            buf = malloc(buf_len);
+            if (buf != NULL && httpd_req_get_url_query_str(req, buf, buf_len) != ESP_OK) {
+                free(buf);
+                buf = NULL;
+            }
+        }
+    }
+
+    if (buf != NULL) {
 
             /* Handle logout */
             if (httpd_query_key_value(buf, "logout", param, sizeof(param)) == ESP_OK) {
@@ -1117,9 +1213,8 @@ static esp_err_t index_get_handler(httpd_req_t *req)
             else if (httpd_query_key_value(buf, "auth_required", param, sizeof(param)) == ESP_OK) {
                 strcpy(login_message, "Please log in to access that page.");
             }
-        }
-        if (buf) free(buf);
     }
+    if (buf) free(buf);
 
     /* Check current authentication status */
     authenticated = is_authenticated(req);
@@ -1298,8 +1393,12 @@ static esp_err_t index_get_handler(httpd_req_t *req)
         httpd_resp_send_chunk(req,
             "<div style='margin-top: 1.5rem; padding: 1.5rem; background: rgba(22, 27, 34, 0.6); border: 1px solid rgba(126, 184, 212, 0.2); border-radius: 12px;'>"
             "<h2 style='margin-top: 0; margin-bottom: 1rem; color: #7eb8d4; font-size: 1.1rem;'>🔒 Login Required</h2>"
-            "<form action='' method='GET'>"
-            "<input type='password' name='login_password' placeholder='Enter password' style='width: 100%; padding: 0.75rem; margin-bottom: 0.75rem; background: rgba(255,255,255,0.1); border: 1px solid rgba(126,184,212,0.3); border-radius: 8px; color: #e0e0e0; font-size: 1rem;'/>"
+            "<form action='/' method='POST'>"
+            /* Hidden username field gives iOS/Safari and password managers an account
+             * to associate the saved password with, so AutoFill works on this
+             * password-only login instead of demanding a username. */
+            "<input type='text' name='username' value='admin' autocomplete='username' style='display:none' aria-hidden='true' tabindex='-1'/>"
+            "<input type='password' name='login_password' placeholder='Enter password' autocomplete='current-password' style='width: 100%; padding: 0.75rem; margin-bottom: 0.75rem; background: rgba(255,255,255,0.1); border: 1px solid rgba(126,184,212,0.3); border-radius: 8px; color: #e0e0e0; font-size: 1rem;'/>"
             "<input type='submit' value='Login' style='width: 100%; padding: 0.75rem; background: linear-gradient(135deg, #2d6a8f 0%, #1e4d6b 100%); color: #fff; border: none; border-radius: 8px; font-size: 1rem; font-weight: 600; cursor: pointer;'/>"
             "</form>"
             "</div>", HTTPD_RESP_USE_STRLEN);
@@ -1314,9 +1413,11 @@ static esp_err_t index_get_handler(httpd_req_t *req)
         httpd_resp_send_chunk(req, form_title, HTTPD_RESP_USE_STRLEN);
         httpd_resp_send_chunk(req,
             "</h2>"
-            "<form action='' method='GET'>"
-            "<input type='password' name='new_password' placeholder='New password (empty to disable)' style='width: 100%; padding: 0.75rem; margin-bottom: 0.75rem; background: rgba(255,255,255,0.1); border: 1px solid rgba(126,184,212,0.3); border-radius: 8px; color: #e0e0e0; font-size: 1rem;'/>"
-            "<input type='password' name='confirm_password' placeholder='Confirm password' style='width: 100%; padding: 0.75rem; margin-bottom: 0.75rem; background: rgba(255,255,255,0.1); border: 1px solid rgba(126,184,212,0.3); border-radius: 8px; color: #e0e0e0; font-size: 1rem;'/>"
+            /* POST keeps the new password out of the URL and makes the Origin-header
+             * CSRF check effective (browsers send Origin on POST but not GET). */
+            "<form action='/' method='POST'>"
+            "<input type='password' name='new_password' placeholder='New password (empty to disable)' autocomplete='new-password' style='width: 100%; padding: 0.75rem; margin-bottom: 0.75rem; background: rgba(255,255,255,0.1); border: 1px solid rgba(126,184,212,0.3); border-radius: 8px; color: #e0e0e0; font-size: 1rem;'/>"
+            "<input type='password' name='confirm_password' placeholder='Confirm password' autocomplete='new-password' style='width: 100%; padding: 0.75rem; margin-bottom: 0.75rem; background: rgba(255,255,255,0.1); border: 1px solid rgba(126,184,212,0.3); border-radius: 8px; color: #e0e0e0; font-size: 1rem;'/>"
             "<input type='submit' value='", HTTPD_RESP_USE_STRLEN);
         httpd_resp_send_chunk(req, form_title, HTTPD_RESP_USE_STRLEN);
         httpd_resp_send_chunk(req,
@@ -1346,6 +1447,14 @@ static esp_err_t index_get_handler(httpd_req_t *req)
 static httpd_uri_t indexp = {
     .uri       = "/",
     .method    = HTTP_GET,
+    .handler   = index_get_handler,
+};
+
+/* Same handler also serves POST so the login form can submit its password in the
+ * request body instead of the URL query string. */
+static httpd_uri_t indexp_post = {
+    .uri       = "/",
+    .method    = HTTP_POST,
     .handler   = index_get_handler,
 };
 
@@ -1433,6 +1542,16 @@ static esp_err_t config_get_handler(httpd_req_t *req)
                         ip_argv[0] = "set_ap_ip";
                         ip_argv[1] = param3;
                         set_ap_ip(2, ip_argv);
+                    }
+
+                    // Check for optional hostname (mDNS / DHCP name).
+                    // set_hostname validates (RFC 952) and updates the global.
+                    if (httpd_query_key_value(buf, "ap_hostname", param4, sizeof(param4)) == ESP_OK) {
+                        ESP_LOGI(TAG, "Found URL query parameter => ap_hostname=%s", param4);
+                        char* host_argv[2];
+                        host_argv[0] = "set_hostname";
+                        host_argv[1] = param4;
+                        set_hostname(2, host_argv);
                     }
 
                     // Check for optional AP DNS server
@@ -1865,7 +1984,7 @@ static esp_err_t config_get_handler(httpd_req_t *req)
 #endif /* CONFIG_PCAP_CAPTURE */
 
     /* Reusable buffer for building sections */
-    char section[2048];
+    char section[2560];
 
     /* --- Begin chunked response --- */
 
@@ -1890,7 +2009,7 @@ static esp_err_t config_get_handler(httpd_req_t *req)
     int max_channel = wifi_country_max_channel(wifi_country_code);
 #endif
     snprintf(section, sizeof(section), CONFIG_CHUNK_AP,
-        safe_ap_ssid, ap_ip_str, ap_dns ? ap_dns : "", ap_mac_str,
+        safe_ap_ssid, ap_ip_str, hostname ? hostname : "", ap_dns ? ap_dns : "", ap_mac_str,
 #if CONFIG_ETH_UPLINK
         max_channel, (int)ap_channel, max_channel,
 #endif
@@ -3405,6 +3524,10 @@ static esp_err_t vpn_get_handler(httpd_req_t *req)
                         preprocess_string(param);
                         nvs_set_str(nvs, "vpn_mask", param);
                     }
+                    if (httpd_query_key_value(buf, "vpn_dns", param, sizeof(param)) == ESP_OK) {
+                        preprocess_string(param);
+                        nvs_set_str(nvs, "vpn_dns", param);
+                    }
                     if (httpd_query_key_value(buf, "vpn_ka", param, sizeof(param)) == ESP_OK) {
                         nvs_set_i32(nvs, "vpn_ka", atoi(param));
                     }
@@ -3509,12 +3632,20 @@ static esp_err_t vpn_get_handler(httpd_req_t *req)
         "<tr><td>Endpoint</td><td><input type='text' name='vpn_endpoint' value='%s' placeholder='Host or IP'/></td></tr>"
         "<tr><td>Port</td><td><input type='number' name='vpn_port' value='%d' min='1' max='65535'/></td></tr>"
         "<tr><td>Tunnel IP</td><td><input type='text' name='vpn_ip' value='%s' placeholder='e.g. 10.0.0.2'/></td></tr>"
-        "<tr><td>Netmask</td><td><input type='text' name='vpn_mask' value='%s' placeholder='255.255.255.0'/></td></tr>"
-        "<tr><td>Keepalive (sec)</td><td><input type='number' name='vpn_ka' value='%d' min='0' max='65535'/></td></tr>",
+        "<tr><td>Netmask</td><td><input type='text' name='vpn_mask' value='%s' placeholder='255.255.255.0'/></td></tr>",
         vpn_endpoint ? vpn_endpoint : "",
         (int)vpn_port,
         vpn_address ? vpn_address : "",
-        vpn_netmask ? vpn_netmask : "255.255.255.0",
+        vpn_netmask ? vpn_netmask : "255.255.255.0");
+    httpd_resp_send_chunk(req, row, HTTPD_RESP_USE_STRLEN);
+
+    snprintf(row, VPN_BUF_SIZE,
+        "<tr><td>DNS</td><td><input type='text' name='vpn_dns' value='%s' placeholder='Optional, e.g. 10.2.0.1'/></td></tr>",
+        vpn_dns ? vpn_dns : "");
+    httpd_resp_send_chunk(req, row, HTTPD_RESP_USE_STRLEN);
+
+    snprintf(row, VPN_BUF_SIZE,
+        "<tr><td>Keepalive (sec)</td><td><input type='number' name='vpn_ka' value='%d' min='0' max='65535'/></td></tr>",
         (int)vpn_keepalive);
     httpd_resp_send_chunk(req, row, HTTPD_RESP_USE_STRLEN);
 
@@ -3534,6 +3665,12 @@ static esp_err_t vpn_get_handler(httpd_req_t *req)
     httpd_resp_send_chunk(req, row, HTTPD_RESP_USE_STRLEN);
 
     httpd_resp_send_chunk(req, VPN_CHUNK_FORM_CLOSE, HTTPD_RESP_USE_STRLEN);
+
+    /* Import section (paste a standard WireGuard .conf) - after the config fields */
+    httpd_resp_send_chunk(req, VPN_CHUNK_IMPORT, HTTPD_RESP_USE_STRLEN);
+
+    /* Page footer (Home button + close tags) */
+    httpd_resp_send_chunk(req, VPN_CHUNK_PAGE_END, HTTPD_RESP_USE_STRLEN);
 
     httpd_resp_send_chunk(req, NULL, 0);
 
@@ -3809,7 +3946,7 @@ httpd_handle_t start_webserver(uint16_t port)
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
     config.server_port = port;
     config.stack_size = 16384;  // Large stack needed for mappings page with 3x 2KB HTML buffers
-    config.max_uri_handlers = 14;
+    config.max_uri_handlers = 16;
     config.max_uri_len = 1024;
     config.open_fn = http_open_fn;
 
@@ -3821,6 +3958,7 @@ httpd_handle_t start_webserver(uint16_t port)
         // Set URI handlers
         ESP_LOGI(TAG, "Registering URI handlers");
         httpd_register_uri_handler(server, &indexp);
+        httpd_register_uri_handler(server, &indexp_post);
         httpd_register_uri_handler(server, &configp);
         httpd_register_uri_handler(server, &mappingsp);
         httpd_register_uri_handler(server, &firewallp);
@@ -3838,6 +3976,7 @@ httpd_handle_t start_webserver(uint16_t port)
         httpd_register_uri_handler(server, &favicon_uri);
         httpd_register_uri_handler(server, &config_exportp);
         httpd_register_uri_handler(server, &config_importp);
+        httpd_register_uri_handler(server, &vpn_importp);
         httpd_register_uri_handler(server, &ota_uploadp);
 
 #if CONFIG_ETH_UPLINK

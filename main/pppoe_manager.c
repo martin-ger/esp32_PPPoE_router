@@ -133,13 +133,15 @@ static void remove_vlan_hook(struct netif *eth_netif)
 
 static void copy_dns_to_ap(void)
 {
-    if (ap_dns && ap_dns[0]) {
-        // Custom DNS configured: set it now that we have connectivity.
+    // VPN DNS (while VPN enabled) or the manual ap_dns override take precedence
+    // over the ISP-supplied servers; effective_ap_dns() returns NULL otherwise.
+    const char *eff_dns = effective_ap_dns();
+    if (eff_dns) {
         esp_netif_dns_info_t dns_info;
         dns_info.ip.type = ESP_IPADDR_TYPE_V4;
-        dns_info.ip.u_addr.ip4.addr = esp_ip4addr_aton(ap_dns);
+        dns_info.ip.u_addr.ip4.addr = esp_ip4addr_aton(eff_dns);
         esp_netif_set_dns_info(wifiAP, ESP_NETIF_DNS_MAIN, &dns_info);
-        ESP_LOGI(TAG, "DNS: %s (custom)", ap_dns);
+        ESP_LOGI(TAG, "DNS: %s (override)", eff_dns);
         return;
     }
     for (int i = 0; i < 2; i++) {

@@ -62,7 +62,7 @@ Live dashboard showing uplink state, uplink IP, byte counters, NAPT table usage,
 
 Full router configuration, split into sections:
 
-- AP settings (SSID, password, channel, auth mode, hidden SSID, IP range, MAC) — channel maximum is enforced based on the configured country code
+- AP settings (SSID, password, channel, auth mode, hidden SSID, IP range, hostname, MAC) — channel maximum is enforced based on the configured country code
 - STA / uplink mode and settings (static IP)
 - Remote console settings (port, timeout)
 - PCAP monitoring settings (mode, snaplen) — only shown when built with `CONFIG_PCAP_CAPTURE`
@@ -87,7 +87,7 @@ ACL rule management across all four packet-flow lists (`to_esp`, `from_esp`, `to
 
 **VPN**
 
-WireGuard configuration: private key, peer public key, optional preshared key, endpoint host and port, tunnel IP, netmask, persistent keepalive, route-all / split-tunnel toggle, and kill switch. Also shows live connection state, tunnel IP, and MSS/PMTU values.
+WireGuard configuration: private key, peer public key, optional preshared key, endpoint host and port, tunnel IP, netmask, optional DNS for AP clients, persistent keepalive, route-all / split-tunnel toggle, and kill switch. Also shows live connection state, tunnel IP, and MSS/PMTU values. An **Import Config** box lets you paste a standard WireGuard `.conf` file — the `[Interface]`/`[Peer]` keys are mapped to the fields above and the device reboots to apply.
 
 **DDNS**
 
@@ -178,6 +178,8 @@ A WireGuard client tunnel that protects all AP client traffic. Two routing modes
 A **kill switch** can be enabled to block all non-local AP traffic whenever the VPN is enabled but not yet connected, preventing internet leakage during reconnection. Port-forwarding rules can be flagged as VPN-bound so they activate only while the tunnel is up.
 
 MTU and MSS are adjusted automatically to account for WireGuard overhead (60 bytes: 20 IP + 8 UDP + 16 WireGuard header + 16 authentication tag).
+
+An optional **VPN DNS** server can be set; while the VPN is enabled it is handed to AP clients (overriding both the upstream-supplied DNS and any manual AP DNS override), so DNS queries resolve through the tunnel. A full WireGuard `.conf` can be imported from the VPN web page or via `vpn_import_conf()` — the `Address`, `DNS`, `Endpoint`, `AllowedIPs` and key fields are mapped onto the router's settings.
 
 ### Dynamic DNS (DDNS)
 
@@ -407,6 +409,7 @@ Lists: `to_esp`, `from_esp`, `to_ap`, `from_ap` — Protocols: `IP`, `TCP`, `UDP
 | `set_vpn <endpoint>` | Set peer host / IP |
 | `set_vpn <address>` | Set tunnel IP address |
 | `set_vpn -m <netmask>` | Tunnel netmask (default 255.255.255.0) |
+| `set_vpn -d <dns_ip>` | DNS server for AP clients while VPN is up |
 | `set_vpn -p <port>` | Peer UDP port (default 51820) |
 | `set_vpn -a <seconds>` | Persistent keepalive (0 = disabled) |
 | `set_vpn -k <psk>` | Preshared key (base64, optional) |
