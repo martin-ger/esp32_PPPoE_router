@@ -23,6 +23,7 @@
 #include "pppoe_config.h"
 #include "router_config.h"
 #include "wifi_config.h"
+#include "vpn_config.h"
 #include "portmap.h"
 #include "pcap_capture.h"
 #include "syslog_client.h"
@@ -189,6 +190,11 @@ static void ppp_link_status_cb(ppp_pcb *pcb, int err_code, void *ctx)
         }
 
         netif_set_default(&ppp_netif);
+        /* A fast PPPoE re-establish can leave the VPN tunnel still up while the
+         * line above steals the default route from it. If the VPN is connected
+         * in route-all mode, restore the WG tunnel as the default route at once
+         * (no-op on first connect — vpn_monitor_task brings the VPN up after). */
+        vpn_reassert_default_route();
         delete_portmap_tab();
         apply_portmap_tab();
         copy_dns_to_ap();

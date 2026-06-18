@@ -38,6 +38,12 @@ void vpn_monitor_task(void *pvParameters);
 void vpn_set_subnet(uint32_t ip, uint32_t mask);
 bool vpn_in_subnet(uint32_t ip);
 
+// Re-assert the WireGuard tunnel as lwIP's default route. Must be called after
+// the PPP GOT_IP event, which makes esp_netif reset netif_default to the PPPoE
+// uplink and would otherwise break route-all mode. No-op unless the VPN is
+// connected with route_all enabled.
+void vpn_reassert_default_route(void);
+
 // Parse a standard WireGuard .conf file and persist the mapped vpn_* settings
 // to NVS (sets vpn_enabled=1 on success). Returns ESP_ERR_INVALID_ARG if a
 // required field (PrivateKey, PublicKey, Endpoint, Address) is missing.

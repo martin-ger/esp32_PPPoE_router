@@ -56,6 +56,9 @@ document.getElementById('dhcp_ip').value = ip;\
 document.getElementById('dhcp_name').value = name;\
 document.getElementById('dhcp_mac').scrollIntoView({behavior: 'smooth', block: 'center'});\
 }\
+function fillDhcpFormBtn(b) {\
+fillDhcpForm(b.dataset.mac, b.dataset.ip, b.dataset.name);\
+}\
 </script>\
 <body>"
 

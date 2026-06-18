@@ -1046,43 +1046,33 @@ esp_err_t http_404_error_handler(httpd_req_t *req, httpd_err_code_t err)
     return ESP_FAIL;
 }
 
-char* html_escape(const char* src) {
-    //HTML escape for both attribute and element-content contexts.
-    //Encodes < > & " ' \ # ; as numeric entities (&#NN;), so attacker-controlled
-    //strings (e.g. scanned SSIDs) cannot inject markup or break out of attributes.
-    int len = strlen(src);
-    //Every char in the string + a null
-    int esc_len = len + 1;
-
-    for (int i = 0; i < len; i++) {
-        if (src[i] == '\\' || src[i] == '\'' || src[i] == '\"' || src[i] == '&' || src[i] == '#' || src[i] == ';' || src[i] == '<' || src[i] == '>') {
-            //Will be replaced with a 5 char sequence
-            esc_len += 4;
+/* Escape src into a caller-provided buffer (no allocation). Encodes
+ * < > & " ' \ # ; as numeric entities (&#NN;) so attacker-controlled strings
+ * (scanned SSIDs, DHCP hostnames, config fields) cannot inject markup or break
+ * out of single/double-quoted attributes. Safe for HTML element text and
+ * attribute values. Always NUL-terminates; if the escaped form does not fit it
+ * is truncated on a whole-entity boundary (never leaves a half-written entity).
+ * Returns dst so it can be used directly as a printf %s argument. */
+const char* html_escape_buf(char* dst, size_t dstlen, const char* src)
+{
+    size_t j = 0;
+    if (dstlen == 0) return dst;
+    for (size_t i = 0; src && src[i] && j + 1 < dstlen; i++) {
+        unsigned char c = (unsigned char)src[i];
+        if (c == '\\' || c == '\'' || c == '"' || c == '&' ||
+            c == '#'  || c == ';'  || c == '<' || c == '>') {
+            if (j + 5 >= dstlen) break;   /* no room for "&#NN;" */
+            dst[j++] = '&';
+            dst[j++] = '#';
+            dst[j++] = '0' + (c / 10);
+            dst[j++] = '0' + (c % 10);
+            dst[j++] = ';';
+        } else {
+            dst[j++] = (char)c;
         }
     }
-
-    char* res = malloc(sizeof(char) * esc_len);
-    if (res == NULL) {
-        ESP_LOGE(TAG, "Failed to allocate memory for HTML escaping");
-        return NULL;
-    }
-
-    int j = 0;
-    for (int i = 0; i < len; i++) {
-        if (src[i] == '\\' || src[i] == '\'' || src[i] == '\"' || src[i] == '&' || src[i] == '#' || src[i] == ';' || src[i] == '<' || src[i] == '>') {
-            res[j++] = '&';
-            res[j++] = '#';
-            res[j++] = '0' + (src[i] / 10);
-            res[j++] = '0' + (src[i] % 10);
-            res[j++] = ';';
-        }
-        else {
-            res[j++] = src[i];
-        }
-    }
-    res[j] = '\0';
-
-    return res;
+    dst[j] = '\0';
+    return dst;
 }
 
 static esp_err_t favicon_get_handler(httpd_req_t *req) {
@@ -1242,11 +1232,10 @@ static esp_err_t index_get_handler(httpd_req_t *req)
             "<tr><td>AP Interface:</td><td><strong style='color:#ff5252;'>Disabled</strong></td></tr>",
             HTTPD_RESP_USE_STRLEN);
     } else {
-        char* safe_ap_ssid = html_escape(ap_ssid);
-        if (safe_ap_ssid == NULL) safe_ap_ssid = strdup("(unknown)");
+        char safe_ap_ssid[160];
+        html_escape_buf(safe_ap_ssid, sizeof(safe_ap_ssid), ap_ssid ? ap_ssid : "");
         snprintf(row, sizeof(row), "<tr><td>SSID:</td><td><strong>%s</strong></td></tr>", safe_ap_ssid);
         httpd_resp_send_chunk(req, row, HTTPD_RESP_USE_STRLEN);
-        free(safe_ap_ssid);
 
         esp_ip4_addr_t ap_addr;
         ap_addr.addr = my_ap_ip;
@@ -1875,12 +1864,17 @@ static esp_err_t config_get_handler(httpd_req_t *req)
         if (buf) free(buf);
     }
 
-    /* Escape values for HTML */
-    char* safe_ssid = html_escape(prefill_ssid[0] ? prefill_ssid : ssid);
-    char* safe_ent_username = html_escape(ent_username);
-    char* safe_ent_identity = html_escape(ent_identity);
+    /* Escape values for HTML (SSID is bounded at 32 bytes; enterprise
+     * username/identity allow more headroom). */
+    char safe_ssid[160];
+    html_escape_buf(safe_ssid, sizeof(safe_ssid), prefill_ssid[0] ? prefill_ssid : (ssid ? ssid : ""));
+    char safe_ent_username[512];
+    html_escape_buf(safe_ent_username, sizeof(safe_ent_username), ent_username ? ent_username : "");
+    char safe_ent_identity[512];
+    html_escape_buf(safe_ent_identity, sizeof(safe_ent_identity), ent_identity ? ent_identity : "");
 #endif
-    char* safe_ap_ssid = html_escape(ap_ssid);
+    char safe_ap_ssid[160];
+    html_escape_buf(safe_ap_ssid, sizeof(safe_ap_ssid), ap_ssid ? ap_ssid : "");
 
     // Get current AP IP address
     char* ap_ip_str = NULL;
@@ -1892,21 +1886,9 @@ static esp_err_t config_get_handler(httpd_req_t *req)
         }
     }
 
-    // Check if any html_escape failed
-    if (safe_ap_ssid == NULL ||
-#if !CONFIG_ETH_UPLINK
-        safe_ssid == NULL ||
-        safe_ent_username == NULL || safe_ent_identity == NULL ||
-#endif
-        ap_ip_str == NULL) {
-        ESP_LOGE(TAG, "Failed to escape HTML strings");
-        free(safe_ap_ssid);
-#if !CONFIG_ETH_UPLINK
-        free(safe_ssid);
-        free(safe_ent_username);
-        free(safe_ent_identity);
-#endif
-        free(ap_ip_str);
+    // ap_ip_str is heap-allocated; bail out if it could not be obtained
+    if (ap_ip_str == NULL) {
+        ESP_LOGE(TAG, "Failed to build AP IP string");
         httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Out of memory");
         return ESP_ERR_NO_MEM;
     }
@@ -2103,12 +2085,6 @@ static esp_err_t config_get_handler(httpd_req_t *req)
     httpd_resp_send_chunk(req, NULL, 0);
 
     /* Cleanup */
-    free(safe_ap_ssid);
-#if !CONFIG_ETH_UPLINK
-    free(safe_ssid);
-    free(safe_ent_username);
-    free(safe_ent_identity);
-#endif
     free(ap_ip_str);
 
     return ESP_OK;
@@ -2320,7 +2296,7 @@ static esp_err_t mappings_get_handler(httpd_req_t *req)
     }
 
     /* Reusable buffer for building individual rows */
-    char row[384];
+    char row[1024];
 
     /* --- Begin chunked response --- */
 
@@ -2329,6 +2305,7 @@ static esp_err_t mappings_get_handler(httpd_req_t *req)
 
     /* Chunk 2: Error modal (if any) */
     if (error_msg[0] != '\0') {
+        char esc_err[sizeof(error_msg) * 5];
         snprintf(row, sizeof(row),
             "<div class='modal-overlay show' id='errorModal'>"
             "<div class='modal-box'>"
@@ -2337,7 +2314,7 @@ static esp_err_t mappings_get_handler(httpd_req_t *req)
             "<button onclick=\"document.getElementById('errorModal').classList.remove('show'); history.replaceState(null, '', '/mappings');\">OK</button>"
             "</div>"
             "</div>",
-            error_msg);
+            html_escape_buf(esc_err, sizeof(esc_err), error_msg));
         httpd_resp_send_chunk(req, row, HTTPD_RESP_USE_STRLEN);
     }
 
@@ -2381,17 +2358,13 @@ static esp_err_t mappings_get_handler(httpd_req_t *req)
                 clients[i].mac[2], clients[i].mac[3],
                 clients[i].mac[4], clients[i].mac[5]);
 
-            /* Escape single quotes in name for JavaScript */
-            char js_name[DHCP_RESERVATION_NAME_LEN * 2];
-            const char *src_name = clients[i].name[0] ? clients[i].name : "";
-            int j = 0;
-            for (int k = 0; src_name[k] && j < (int)sizeof(js_name) - 2; k++) {
-                if (src_name[k] == '\'') {
-                    js_name[j++] = '\\';
-                }
-                js_name[j++] = src_name[k];
-            }
-            js_name[j] = '\0';
+            /* HTML-escape the client-supplied name. Used both as table text and
+             * inside data-* attributes; the Select button reads the attribute via
+             * dataset and assigns it to a form field, so no JS-string injection is
+             * possible (the old inline onclick('%s') was XSS-prone). */
+            char esc_name[DHCP_RESERVATION_NAME_LEN * 5];
+            html_escape_buf(esc_name, sizeof(esc_name),
+                            clients[i].name[0] ? clients[i].name : "");
 
             if (client_stats_enabled) {
                 /* Find matching traffic stats by MAC */
@@ -2408,18 +2381,18 @@ static esp_err_t mappings_get_handler(httpd_req_t *req)
                 snprintf(row, sizeof(row),
                     "<tr>"
                     "<td>%s</td><td>%s</td><td>%s</td><td>%s</td>"
-                    "<td><button type='button' class='select-button' onclick=\"fillDhcpForm('%s','%s','%s')\">Select</button></td>"
+                    "<td><button type='button' class='select-button' data-mac='%s' data-ip='%s' data-name='%s' onclick='fillDhcpFormBtn(this)'>Select</button></td>"
                     "</tr>",
-                    mac_str, ip_str, clients[i].name[0] ? clients[i].name : "-", traffic_str,
-                    mac_str, clients[i].has_ip ? ip_str : "", js_name);
+                    mac_str, ip_str, clients[i].name[0] ? esc_name : "-", traffic_str,
+                    mac_str, clients[i].has_ip ? ip_str : "", esc_name);
             } else {
                 snprintf(row, sizeof(row),
                     "<tr>"
                     "<td>%s</td><td>%s</td><td>%s</td>"
-                    "<td><button type='button' class='select-button' onclick=\"fillDhcpForm('%s','%s','%s')\">Select</button></td>"
+                    "<td><button type='button' class='select-button' data-mac='%s' data-ip='%s' data-name='%s' onclick='fillDhcpFormBtn(this)'>Select</button></td>"
                     "</tr>",
-                    mac_str, ip_str, clients[i].name[0] ? clients[i].name : "-",
-                    mac_str, clients[i].has_ip ? ip_str : "", js_name);
+                    mac_str, ip_str, clients[i].name[0] ? esc_name : "-",
+                    mac_str, clients[i].has_ip ? ip_str : "", esc_name);
             }
             httpd_resp_send_chunk(req, row, HTTPD_RESP_USE_STRLEN);
         }
@@ -2464,6 +2437,8 @@ static esp_err_t mappings_get_handler(httpd_req_t *req)
                 snprintf(ip_col, sizeof(ip_col), IPSTR, IP2STR(&addr));
             }
 
+            char esc_rsv_name[DHCP_RESERVATION_NAME_LEN * 5];
+            html_escape_buf(esc_rsv_name, sizeof(esc_rsv_name), dhcp_reservations[i].name);
             snprintf(row, sizeof(row),
                 "<tr>"
                 "<td>%02X:%02X:%02X:%02X:%02X:%02X</td>"
@@ -2475,7 +2450,7 @@ static esp_err_t mappings_get_handler(httpd_req_t *req)
                 dhcp_reservations[i].mac[2], dhcp_reservations[i].mac[3],
                 dhcp_reservations[i].mac[4], dhcp_reservations[i].mac[5],
                 ip_col,
-                dhcp_reservations[i].name[0] ? dhcp_reservations[i].name : "-",
+                dhcp_reservations[i].name[0] ? esc_rsv_name : "-",
                 dhcp_reservations[i].mac[0], dhcp_reservations[i].mac[1],
                 dhcp_reservations[i].mac[2], dhcp_reservations[i].mac[3],
                 dhcp_reservations[i].mac[4], dhcp_reservations[i].mac[5]
@@ -2512,6 +2487,8 @@ static esp_err_t mappings_get_handler(httpd_req_t *req)
                     snprintf(ip_or_name, sizeof(ip_or_name), IPSTR, IP2STR(&addr));
                 }
 
+                char esc_ip_or_name[DHCP_RESERVATION_NAME_LEN * 5];
+                html_escape_buf(esc_ip_or_name, sizeof(esc_ip_or_name), ip_or_name);
                 snprintf(row, sizeof(row),
                     "<tr>"
                     "<td>%s</td>"
@@ -2522,7 +2499,7 @@ static esp_err_t mappings_get_handler(httpd_req_t *req)
                     "</tr>",
                     portmap_tab[i].proto == PROTO_TCP ? "TCP" : "UDP",
                     portmap_tab[i].mport,
-                    ip_or_name,
+                    esc_ip_or_name,
                     portmap_tab[i].dport,
                     portmap_tab[i].proto == PROTO_TCP ? "TCP" : "UDP",
                     portmap_tab[i].mport
@@ -2734,7 +2711,7 @@ static esp_err_t firewall_get_handler(httpd_req_t *req)
     }
 
     /* Reusable buffer for building individual elements */
-    char row[384];
+    char row[1024];
 
     /* --- Begin chunked response --- */
 
@@ -2743,6 +2720,7 @@ static esp_err_t firewall_get_handler(httpd_req_t *req)
 
     /* Chunk 2: Error modal (if any) */
     if (error_msg[0] != '\0') {
+        char esc_err[sizeof(error_msg) * 5];
         snprintf(row, sizeof(row),
             "<div class='modal-overlay show' id='errorModal'>"
             "<div class='modal-box'>"
@@ -2751,7 +2729,7 @@ static esp_err_t firewall_get_handler(httpd_req_t *req)
             "<button onclick=\"document.getElementById('errorModal').classList.remove('show'); history.replaceState(null, '', '/firewall');\">OK</button>"
             "</div>"
             "</div>",
-            error_msg);
+            html_escape_buf(esc_err, sizeof(esc_err), error_msg));
         httpd_resp_send_chunk(req, row, HTTPD_RESP_USE_STRLEN);
     }
 
@@ -2868,14 +2846,19 @@ static esp_err_t firewall_get_handler(httpd_req_t *req)
                 action_str = monitor ? "Deny+M" : "Deny";
             }
 
+            /* src_str/dst_str may hold a device name resolved from a client's
+             * DHCP hostname, so escape before reflecting into the table. */
+            char esc_src[DHCP_RESERVATION_NAME_LEN * 5], esc_dst[DHCP_RESERVATION_NAME_LEN * 5];
+            html_escape_buf(esc_src, sizeof(esc_src), src_str);
+            html_escape_buf(esc_dst, sizeof(esc_dst), dst_str);
             snprintf(row, sizeof(row),
                 "<tr>"
                 "<td>%d</td><td>%s</td><td>%s</td><td>%s</td>"
                 "<td>%s</td><td>%s</td><td>%s</td><td>%lu</td>"
                 "<td><a href='/firewall?del_acl=%d&del_idx=%d' class='red-button'>Del</a></td>"
                 "</tr>",
-                i, proto_str, src_str, s_port_str,
-                dst_str, d_port_str, action_str, (unsigned long)rules_copy[i].hit_count,
+                i, proto_str, esc_src, s_port_str,
+                esc_dst, d_port_str, action_str, (unsigned long)rules_copy[i].hit_count,
                 list_no, i);
             httpd_resp_send_chunk(req, row, HTTPD_RESP_USE_STRLEN);
         }
@@ -3043,10 +3026,8 @@ static esp_err_t scan_get_handler(httpd_req_t *req)
             }
 
             /* HTML-escape SSID for display */
-            char *safe_ssid = html_escape((const char *)ap_list[i].ssid);
-            if (safe_ssid == NULL) {
-                safe_ssid = strdup("(unknown)");
-            }
+            char safe_ssid[160];
+            html_escape_buf(safe_ssid, sizeof(safe_ssid), (const char *)ap_list[i].ssid);
 
             /* Build connect button if allowed */
             char connect_cell[256] = "";
@@ -3100,8 +3081,6 @@ static esp_err_t scan_get_handler(httpd_req_t *req)
                 web_auth_mode_to_str(ap_list[i].authmode),
                 connect_cell
             );
-
-            free(safe_ssid);
         }
     }
 
@@ -3239,26 +3218,22 @@ static esp_err_t setup_get_handler(httpd_req_t *req)
 
     httpd_resp_send_chunk(req, SETUP_CHUNK_HEAD, HTTPD_RESP_USE_STRLEN);
 
-    char* safe_ap_ssid = html_escape(ap_ssid);
-    if (safe_ap_ssid == NULL) safe_ap_ssid = strdup("");
+    char safe_ap_ssid[160];
+    html_escape_buf(safe_ap_ssid, sizeof(safe_ap_ssid), ap_ssid ? ap_ssid : "");
 
 #if CONFIG_ETH_UPLINK
     char section[1024];
     snprintf(section, sizeof(section), SETUP_CHUNK_FORM,
         safe_ap_ssid, "");
     httpd_resp_send_chunk(req, section, HTTPD_RESP_USE_STRLEN);
-    free(safe_ap_ssid);
 #else
-    char* safe_ssid = html_escape(prefill_ssid[0] ? prefill_ssid : ssid);
-    if (safe_ssid == NULL) safe_ssid = strdup("");
+    char safe_ssid[160];
+    html_escape_buf(safe_ssid, sizeof(safe_ssid), prefill_ssid[0] ? prefill_ssid : (ssid ? ssid : ""));
 
     char section[1024];
     snprintf(section, sizeof(section), SETUP_CHUNK_FORM,
         safe_ap_ssid, safe_ssid);
     httpd_resp_send_chunk(req, section, HTTPD_RESP_USE_STRLEN);
-
-    free(safe_ap_ssid);
-    free(safe_ssid);
 #endif
 
     httpd_resp_send_chunk(req, NULL, 0);
@@ -3413,9 +3388,10 @@ static esp_err_t pppoe_get_handler(httpd_req_t *req)
         pppoe_enabled ? "checked" : "", pppoe_enabled ? "" : "checked");
     httpd_resp_send_chunk(req, row, HTTPD_RESP_USE_STRLEN);
 
+    char esc_field[512];
     snprintf(row, PPPOE_BUF_SIZE,
         "<tr><td>Username</td><td><input type='text' name='pppoe_user' value='%s' placeholder='ISP username'/></td></tr>",
-        pppoe_user ? pppoe_user : "");
+        html_escape_buf(esc_field, sizeof(esc_field), pppoe_user ? pppoe_user : ""));
     httpd_resp_send_chunk(req, row, HTTPD_RESP_USE_STRLEN);
 
     snprintf(row, PPPOE_BUF_SIZE,
@@ -3425,7 +3401,7 @@ static esp_err_t pppoe_get_handler(httpd_req_t *req)
 
     snprintf(row, PPPOE_BUF_SIZE,
         "<tr><td>Service</td><td><input type='text' name='pppoe_svc' value='%s' placeholder='Optional (leave empty for any)'/></td></tr>",
-        pppoe_service ? pppoe_service : "");
+        html_escape_buf(esc_field, sizeof(esc_field), pppoe_service ? pppoe_service : ""));
     httpd_resp_send_chunk(req, row, HTTPD_RESP_USE_STRLEN);
 
     snprintf(row, PPPOE_BUF_SIZE,
@@ -3605,6 +3581,9 @@ static esp_err_t vpn_get_handler(httpd_req_t *req)
     /* Config form */
     httpd_resp_send_chunk(req, VPN_CHUNK_FORM_OPEN, HTTPD_RESP_USE_STRLEN);
 
+    /* Escape buffers for reflected config values (HTML attribute context) */
+    char vpn_e1[256], vpn_e2[256], vpn_e3[256];
+
     snprintf(row, VPN_BUF_SIZE,
         "<tr><td>Enabled</td><td>"
         "<label class='rl'><input type='radio' name='vpn_enabled' value='1' %s> On</label>"
@@ -3620,7 +3599,7 @@ static esp_err_t vpn_get_handler(httpd_req_t *req)
 
     snprintf(row, VPN_BUF_SIZE,
         "<tr><td>Public Key</td><td><input type='text' name='vpn_pubkey' value='%s' placeholder='Peer base64 public key'/></td></tr>",
-        vpn_public_key ? vpn_public_key : "");
+        html_escape_buf(vpn_e1, sizeof(vpn_e1), vpn_public_key ? vpn_public_key : ""));
     httpd_resp_send_chunk(req, row, HTTPD_RESP_USE_STRLEN);
 
     snprintf(row, VPN_BUF_SIZE,
@@ -3629,19 +3608,28 @@ static esp_err_t vpn_get_handler(httpd_req_t *req)
     httpd_resp_send_chunk(req, row, HTTPD_RESP_USE_STRLEN);
 
     snprintf(row, VPN_BUF_SIZE,
-        "<tr><td>Endpoint</td><td><input type='text' name='vpn_endpoint' value='%s' placeholder='Host or IP'/></td></tr>"
-        "<tr><td>Port</td><td><input type='number' name='vpn_port' value='%d' min='1' max='65535'/></td></tr>"
-        "<tr><td>Tunnel IP</td><td><input type='text' name='vpn_ip' value='%s' placeholder='e.g. 10.0.0.2'/></td></tr>"
+        "<tr><td>Endpoint</td><td><input type='text' name='vpn_endpoint' value='%s' placeholder='Host or IP'/></td></tr>",
+        html_escape_buf(vpn_e1, sizeof(vpn_e1), vpn_endpoint ? vpn_endpoint : ""));
+    httpd_resp_send_chunk(req, row, HTTPD_RESP_USE_STRLEN);
+
+    snprintf(row, VPN_BUF_SIZE,
+        "<tr><td>Port</td><td><input type='number' name='vpn_port' value='%d' min='1' max='65535'/></td></tr>",
+        (int)vpn_port);
+    httpd_resp_send_chunk(req, row, HTTPD_RESP_USE_STRLEN);
+
+    snprintf(row, VPN_BUF_SIZE,
+        "<tr><td>Tunnel IP</td><td><input type='text' name='vpn_ip' value='%s' placeholder='e.g. 10.0.0.2'/></td></tr>",
+        html_escape_buf(vpn_e2, sizeof(vpn_e2), vpn_address ? vpn_address : ""));
+    httpd_resp_send_chunk(req, row, HTTPD_RESP_USE_STRLEN);
+
+    snprintf(row, VPN_BUF_SIZE,
         "<tr><td>Netmask</td><td><input type='text' name='vpn_mask' value='%s' placeholder='255.255.255.0'/></td></tr>",
-        vpn_endpoint ? vpn_endpoint : "",
-        (int)vpn_port,
-        vpn_address ? vpn_address : "",
-        vpn_netmask ? vpn_netmask : "255.255.255.0");
+        html_escape_buf(vpn_e3, sizeof(vpn_e3), vpn_netmask ? vpn_netmask : "255.255.255.0"));
     httpd_resp_send_chunk(req, row, HTTPD_RESP_USE_STRLEN);
 
     snprintf(row, VPN_BUF_SIZE,
         "<tr><td>DNS</td><td><input type='text' name='vpn_dns' value='%s' placeholder='Optional, e.g. 10.2.0.1'/></td></tr>",
-        vpn_dns ? vpn_dns : "");
+        html_escape_buf(vpn_e1, sizeof(vpn_e1), vpn_dns ? vpn_dns : ""));
     httpd_resp_send_chunk(req, row, HTTPD_RESP_USE_STRLEN);
 
     snprintf(row, VPN_BUF_SIZE,
@@ -3690,7 +3678,9 @@ static httpd_uri_t vpnp = {
 /*  /ddns — Dynamic DNS configuration                                  */
 /* ------------------------------------------------------------------ */
 
-#define DDNS_ROW_BUF 512
+/* Large enough for the hostname row: fixed markup + label + hint plus the
+ * worst-case escaped host (DDNS_MAX_HOSTNAME * 5 for &#NN; expansion). */
+#define DDNS_ROW_BUF 1024
 
 static esp_err_t ddns_get_handler(httpd_req_t *req);
 
@@ -3867,6 +3857,7 @@ static esp_err_t ddns_get_handler(httpd_req_t *req)
 
     /* Hostname/Subdomain — label and hint updated by JS; hidden for Selfhost.de.
      * Initial display set server-side to avoid a visible flash before JS runs. */
+    char esc_host[DDNS_MAX_HOSTNAME * 5];
     snprintf(row, sizeof(row),
         "<tr id='row_host'%s><td id='lbl_host'>%s</td><td>"
         "<input type='text' name='ddns_host' value='%s' autocomplete='off'/>"
@@ -3874,7 +3865,7 @@ static esp_err_t ddns_get_handler(httpd_req_t *req)
         "</td></tr>",
         selfhost ? " style='display:none'" : "",
          duckdns ? "Subdomain" : "Hostname",
-         host,
+         html_escape_buf(esc_host, sizeof(esc_host), host),
          duckdns ? "Your DuckDNS subdomain \xe2\x80\x94 without .duckdns.org"
                    : noip ? "Your full NoIP hostname, e.g. myhost.ddns.net"
                    : dynu ? "Your full Dynu hostname, e.g. myhost.mynamedomain.com"

@@ -121,6 +121,24 @@ esp_err_t vpn_connect(void)
     return ESP_OK;
 }
 
+void vpn_reassert_default_route(void)
+{
+    /* ESP-IDF's esp_netif owns lwIP's netif_default and re-asserts it (for PPP,
+     * via esp_netif_ppp_set_default_netif) whenever the PPPoE link comes up.
+     * esp_wireguard_set_default() uses raw netif_set_default(), which esp_netif
+     * does not track, so on every PPPoE (re)connect the WG tunnel silently loses
+     * the default route to the PPP netif and route-all traffic leaks straight
+     * out the uplink. Re-assert the tunnel as default after the PPP GOT_IP event
+     * while the VPN is up in route-all mode.
+     *
+     * Safe to call from event-handler context: WireGuard's own encrypted packets
+     * are sent via udp_sendto_if(underlying_netif) and never use the default
+     * route, so this only redirects the forwarded inner traffic. */
+    if (vpn_enabled && vpn_route_all && wg_initialized && wg_ctx.netif && vpn_connected) {
+        esp_wireguard_set_default(&wg_ctx);
+    }
+}
+
 void vpn_disconnect(void)
 {
     // Set vpn_connected false FIRST to prevent race with vpn_is_connected()
@@ -234,6 +252,13 @@ void vpn_monitor_task(void *pvParameters)
                 vpn_disconnect();
                 vTaskDelay(pdMS_TO_TICKS(2000));
                 vpn_connect();
+            } else {
+                /* Tunnel healthy. A PPPoE re-establish within this interval may
+                 * have run netif_set_default(&ppp_netif) and stolen the default
+                 * route from the WG tunnel without the health check noticing
+                 * (the peer stays up across a brief link bounce). Re-assert the
+                 * tunnel as default so route-all traffic stays in the tunnel. */
+                vpn_reassert_default_route();
             }
         }
     }
