@@ -1,0 +1,87 @@
+# W5500 SPI Ethernet + ESP32-C3 SuperMini
+#
+# Wiring:
+#   W5500 MISO  -> GPIO5   W5500 MOSI  -> GPIO6
+#   W5500 SCLK  -> GPIO4   W5500 CS    -> GPIO7
+#   W5500 INT   -> GPIO3   W5500 RST   -> GPIO2
+#
+# Build:
+#   idf.py set-target esp32c3 -B build_w5500_c3 \
+#     -D SDKCONFIG=sdkconfig.w5500_c3 \
+#     -D SDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.defaults.w5500_c3" \
+#     build
+#
+# Flash/monitor:
+#   idf.py -B build_w5500_c3 -p /dev/ttyACM0 flash monitor   # SuperMini (USB-JTAG)
+#   idf.py -B build_w5500_c3 -p /dev/ttyUSB0 flash monitor   # DevKit-M-1 (UART)
+
+# Select W5500 driver
+CONFIG_ETH_UPLINK=y
+CONFIG_ETH_DRIVER_W5500=y
+
+# Enable W5500 SPI Ethernet driver in ESP-IDF
+CONFIG_ETH_USE_SPI_ETHERNET=y
+CONFIG_ETH_SPI_ETHERNET_W5500=y
+
+# W5500 pin assignments
+CONFIG_ETH_SPI_HOST=1
+CONFIG_ETH_SPI_MISO_GPIO=5
+CONFIG_ETH_SPI_MOSI_GPIO=6
+CONFIG_ETH_SPI_SCLK_GPIO=4
+CONFIG_ETH_SPI_CS_GPIO=7
+CONFIG_ETH_SPI_INT_GPIO=3
+CONFIG_ETH_SPI_RST_GPIO=2
+
+# SPI clock speed — 27 rounds to the 80/3 = 26.67 MHz divider (25 would round down to 20)
+CONFIG_ETH_SPI_CLOCK_MHZ=27
+
+# Use built-in USB Serial/JTAG as console (SuperMini has no separate UART chip)
+CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y
+
+# ESP32-C3 max CPU frequency is 160 MHz (no 240 MHz option)
+CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ_160=y
+# CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ_240 is not set
+
+# W5500 SPI polling starves IDLE task on single-core C3 — don't watch it
+CONFIG_ESP_TASK_WDT_CHECK_IDLE_TASK_CPU0=n
+
+# Raise main task priority so the REPL can compete with ETH MAC (priority 18)
+# and WiFi tasks on the single-core C3.  Default is 1, which starves the console.
+CONFIG_ESP_MAIN_TASK_PRIO=5
+
+# Add RTC FAST memory (~8 KB) to heap to ease DMA SRAM pressure
+# (IRAM optimizations and DMA descriptors share the same physical SRAM pool on C3)
+CONFIG_ESP_SYSTEM_ALLOW_RTC_FAST_MEM_AS_HEAP=y
+
+# --- Performance: IRAM placement for hot-path code ---
+# On the C3, IRAM and DRAM share one physical SRAM pool, so every byte of code
+# placed in IRAM is a byte unavailable to the heap.  With the full feature set
+# this pushed free heap to ~3.5 KB and starved the HTTP server (page mallocs
+# failed; connections stalled).  Keep only the latency-critical ISR in IRAM and
+# let the rest run from flash cache to reclaim heap.
+# SPI master: keep the ISR in IRAM (latency), but let the polling/transfer
+# functions run from flash cache (~5.5 KB heap reclaimed).
+# CONFIG_SPI_MASTER_IN_IRAM is not set
+CONFIG_SPI_MASTER_ISR_IN_IRAM=y
+
+# lwIP: packet hot path in IRAM costs ~15.5 KB of heap on the C3 — disable.
+# CONFIG_LWIP_IRAM_OPTIMIZATION is not set
+
+# Optimize for speed instead of size
+CONFIG_COMPILER_OPTIMIZATION_PERF=y
+
+# --- RAM reduction for single-core C3 ---
+# WiFi dynamic buffers reduced for C3 single-core (16+16 vs 48+48)
+CONFIG_ESP_WIFI_STATIC_RX_BUFFER_NUM=6
+CONFIG_ESP_WIFI_DYNAMIC_RX_BUFFER_NUM=16
+CONFIG_ESP_WIFI_DYNAMIC_TX_BUFFER_NUM=16
+
+# TCP windows: default 5760 wastes RAM on a NAT router.  2×MSS (2880) is enough.
+CONFIG_LWIP_TCP_SND_BUF_DEFAULT=2880
+CONFIG_LWIP_TCP_WND_DEFAULT=2880
+
+# Disable mDNS responder (saves ~4 KB heap + task stack)
+# CONFIG_MDNS_ENABLED is not set
+
+# Limit lwIP sockets to reduce per-socket control block overhead
+CONFIG_LWIP_MAX_SOCKETS=8

@@ -41,6 +41,19 @@
 #endif
 #if CONFIG_ETH_UPLINK
 #include "esp_eth.h"
+#include "esp_mac.h"
+#if defined(CONFIG_ETH_DRIVER_W5500)
+#include "driver/spi_master.h"
+#include "esp_eth_mac_spi.h"
+#include "w5500_spi_driver.h"
+#include "esp_heap_caps.h"
+#else
+/* ESP32 internal EMAC API (eth_esp32_emac_config_t, esp_eth_mac_new_esp32).
+ * Since ESP-IDF v5.4 the chip-specific MAC types moved out of esp_eth.h into
+ * their own header; its contents are guarded by CONFIG_ETH_USE_ESP32_EMAC so
+ * it is harmless to include on targets without an internal EMAC. */
+#include "esp_eth_mac_esp.h"
+#endif
 #endif
 
 #include "lwip/opt.h"
@@ -814,6 +827,48 @@ void eth_init(const char* static_ip, const char* subnet_mask, const char* gatewa
     ESP_ERROR_CHECK(esp_event_loop_create_default());
 
     // --- Ethernet uplink ---
+#if defined(CONFIG_ETH_DRIVER_W5500)
+    // W5500 SPI Ethernet (ESP32-C3 SuperMini)
+    // GPIO ISR service required by the W5500 INT pin handler
+    gpio_install_isr_service(0);
+
+    spi_bus_config_t buscfg = {
+        .miso_io_num   = CONFIG_ETH_SPI_MISO_GPIO,
+        .mosi_io_num   = CONFIG_ETH_SPI_MOSI_GPIO,
+        .sclk_io_num   = CONFIG_ETH_SPI_SCLK_GPIO,
+        .quadwp_io_num = -1,
+        .quadhd_io_num = -1,
+    };
+    ESP_ERROR_CHECK(spi_bus_initialize(CONFIG_ETH_SPI_HOST, &buscfg, SPI_DMA_CH_AUTO));
+
+    spi_device_interface_config_t devcfg = {
+        .command_bits  = 16,  // W5500 SPI frame: 16-bit offset address
+        .address_bits  = 8,   // W5500 SPI frame: 8-bit control byte
+        .mode          = 0,
+        .spics_io_num  = CONFIG_ETH_SPI_CS_GPIO,
+        .queue_size    = 4,
+    };
+
+    int spi_mhz = CONFIG_ETH_SPI_CLOCK_MHZ;
+    get_config_param_int("spi_clk_mhz", &spi_mhz);
+    if (spi_mhz < 1 || spi_mhz > 80) spi_mhz = CONFIG_ETH_SPI_CLOCK_MHZ;
+    devcfg.clock_speed_hz = spi_mhz * 1000 * 1000;
+
+    ESP_LOGI(TAG, "Initializing W5500 SPI driver with %d MHz.", spi_mhz);
+
+    eth_w5500_config_t w5500_config = ETH_W5500_DEFAULT_CONFIG(CONFIG_ETH_SPI_HOST, &devcfg);
+    w5500_config.int_gpio_num = CONFIG_ETH_SPI_INT_GPIO;
+    w5500_spi_driver_config(&w5500_config.custom_spi_driver, &w5500_config);
+
+    eth_mac_config_t mac_config = ETH_MAC_DEFAULT_CONFIG();
+    mac_config.rx_task_prio = 19;
+    esp_eth_mac_t *mac = esp_eth_mac_new_w5500(&w5500_config, &mac_config);
+
+    eth_phy_config_t phy_config = ETH_PHY_DEFAULT_CONFIG();
+    phy_config.reset_gpio_num = CONFIG_ETH_SPI_RST_GPIO;
+    esp_eth_phy_t *phy = esp_eth_phy_new_w5500(&phy_config);
+
+#else
     // Power on LAN8720 PHY via GPIO16 before EMAC init (WT32-ETH01)
 #if CONFIG_ETH_PHY_POWER_GPIO >= 0
     gpio_config_t phy_power_cfg = {
@@ -836,9 +891,19 @@ void eth_init(const char* static_ip, const char* subnet_mask, const char* gatewa
     // phy_config.reset_gpio_num = CONFIG_ETH_PHY_POWER_GPIO;
     phy_config.reset_gpio_num = -1;  // Don't use PHY reset - we handle power via GPIO above
     esp_eth_phy_t *phy = esp_eth_phy_new_lan87xx(&phy_config);
+#endif  // CONFIG_ETH_DRIVER_W5500
 
     esp_eth_config_t config = ETH_DEFAULT_CONFIG(mac, phy);
     ESP_ERROR_CHECK(esp_eth_driver_install(&config, &eth_handle));
+
+#if defined(CONFIG_ETH_DRIVER_W5500)
+    // W5500 modules often lack a factory MAC — derive one from the chip's base MAC
+    {
+        uint8_t eth_mac_addr[6];
+        ESP_ERROR_CHECK(esp_read_mac(eth_mac_addr, ESP_MAC_ETH));
+        ESP_ERROR_CHECK(esp_eth_ioctl(eth_handle, ETH_CMD_S_MAC_ADDR, eth_mac_addr));
+    }
+#endif
 
     esp_netif_config_t netif_cfg = ESP_NETIF_DEFAULT_ETH();
     ethNetif = esp_netif_new(&netif_cfg);
@@ -931,6 +996,10 @@ void eth_init(const char* static_ip, const char* subnet_mask, const char* gatewa
     esp_netif_set_dns_info(wifiAP, ESP_NETIF_DNS_MAIN, &dnsserver);
 
     if (!ap_disabled) {
+#if defined(CONFIG_ETH_DRIVER_W5500)
+        // Single-core C3: disable WiFi power saving to reduce TX latency
+        esp_wifi_set_ps(WIFI_PS_NONE);
+#endif
         ESP_ERROR_CHECK(esp_wifi_start());
     } else {
         ESP_LOGI(TAG, "AP interface disabled at boot");

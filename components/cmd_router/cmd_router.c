@@ -42,6 +42,9 @@
 #endif
 #include "router_globals.h"
 #include "cmd_router.h"
+#if CONFIG_ETH_UPLINK && defined(CONFIG_ETH_DRIVER_W5500)
+#include "w5500_spi_driver.h"
+#endif
 #include "pcap_capture.h"
 #include "acl.h"
 #include "remote_console.h"
@@ -105,6 +108,10 @@ static void register_set_vpn(void);
 static void register_set_tz(void);
 #if CONFIG_DDNS_ENABLED
 static void register_ddns_cmd(void);
+#endif
+#if CONFIG_ETH_UPLINK && defined(CONFIG_ETH_DRIVER_W5500)
+static void register_w5500(void);
+static void register_set_spi_clock(void);
 #endif
 
 /* ACL helper functions (forward declarations) */
@@ -188,6 +195,10 @@ esp_err_t get_config_param_str(char* name, char** param)
             err = nvs_get_str(nvs, name, *param, &len);
             ESP_LOGI(TAG, "%s %s", name, *param);
         } else {
+            /* Key missing (NVS_NOT_FOUND) is the common case for optional keys;
+             * must still close the handle here or it leaks on every lookup —
+             * e.g. http_open_fn reads "wan_access" on every connection. */
+            nvs_close(nvs);
             return err;
         }
         nvs_close(nvs);
@@ -206,6 +217,10 @@ esp_err_t get_config_param_int(char* name, int* param)
         if ( (err = nvs_get_i32(nvs, name, (int32_t*)(param))) == ESP_OK) {
             //ESP_LOGI(TAG, "%s %d", name, *param);
         } else {
+            /* Key missing (NVS_NOT_FOUND) is the common case for optional keys;
+             * must still close the handle here or it leaks on every lookup —
+             * e.g. http_open_fn reads "wan_access" on every connection. */
+            nvs_close(nvs);
             return err;
         }
         nvs_close(nvs);
@@ -235,6 +250,10 @@ esp_err_t get_config_param_blob(char* name, uint8_t** blob, size_t blob_len)
             err = nvs_get_blob(nvs, name, *blob, &len);
             ESP_LOGI(TAG, "%s: %d", name, len);
         } else {
+            /* Key missing (NVS_NOT_FOUND) is the common case for optional keys;
+             * must still close the handle here or it leaks on every lookup —
+             * e.g. http_open_fn reads "wan_access" on every connection. */
+            nvs_close(nvs);
             return err;
         }
         nvs_close(nvs);
@@ -483,6 +502,10 @@ void register_router(void)
     register_set_vpn();
 #if CONFIG_DDNS_ENABLED
     register_ddns_cmd();
+#endif
+#if CONFIG_ETH_UPLINK && defined(CONFIG_ETH_DRIVER_W5500)
+    register_set_spi_clock();
+    register_w5500();
 #endif
 }
 
@@ -3852,3 +3875,166 @@ static void register_ddns_cmd(void)
     ESP_ERROR_CHECK( esp_console_cmd_register(&cmd) );
 }
 #endif
+
+/* ========================================================= */
+/* W5500 CLI commands                                        */
+/* ========================================================= */
+
+#if CONFIG_ETH_UPLINK && defined(CONFIG_ETH_DRIVER_W5500)
+
+#define _STRINGIFY(x) #x
+#define STRINGIFY(x)  _STRINGIFY(x)
+
+static struct {
+    struct arg_int *mhz;
+    struct arg_end *end;
+} set_spi_clock_arg;
+
+static int set_spi_clock_cmd(int argc, char **argv)
+{
+    int nerrors = arg_parse(argc, argv, (void **) &set_spi_clock_arg);
+    if (nerrors != 0) {
+        arg_print_errors(stderr, set_spi_clock_arg.end, argv[0]);
+        return 1;
+    }
+
+    int mhz = set_spi_clock_arg.mhz->ival[0];
+    if (mhz < 1 || mhz > 80) {
+        printf("SPI clock must be between 1 and 80 MHz.\n");
+        return 1;
+    }
+
+    esp_err_t err = set_config_param_int("spi_clk_mhz", mhz);
+    if (err == ESP_OK) {
+        printf("W5500 SPI clock set to %d MHz. Restart to apply\n", mhz);
+    }
+    return err;
+}
+
+static void register_set_spi_clock(void)
+{
+    set_spi_clock_arg.mhz = arg_int1(NULL, NULL, "<MHz>", "SPI clock speed in MHz (1-80, default: " STRINGIFY(CONFIG_ETH_SPI_CLOCK_MHZ) ")");
+    set_spi_clock_arg.end = arg_end(1);
+
+    const esp_console_cmd_t cmd = {
+        .command = "set_spi_clock",
+        .help = "Set W5500 SPI clock speed in MHz (1-80). Saved to NVS, applied after restart.",
+        .hint = NULL,
+        .func = &set_spi_clock_cmd,
+        .argtable = &set_spi_clock_arg
+    };
+    ESP_ERROR_CHECK( esp_console_cmd_register(&cmd) );
+}
+
+static struct {
+    struct arg_str *action;
+    struct arg_end *end;
+} w5500_arg;
+
+static int w5500_cmd(int argc, char **argv)
+{
+    int nerrors = arg_parse(argc, argv, (void **)&w5500_arg);
+    if (nerrors != 0) {
+        arg_print_errors(stderr, w5500_arg.end, argv[0]);
+        return 1;
+    }
+
+    const char *action = w5500_arg.action->sval[0];
+
+    if (strcmp(action, "status") == 0) {
+        w5500_diag_t d;
+        if (w5500_get_diag(&d) != ESP_OK) {
+            printf("W5500 not available (MAC not initialised)\n");
+            return 1;
+        }
+
+        printf("W5500 Diagnostics:\n");
+        printf("  Chip version : 0x%02X%s\n", d.version,
+               d.version == 0x04 ? " (OK)" : " (!!! unexpected, expect 0x04)");
+
+        bool link  = (d.phycfgr & 0x01) != 0;
+        bool spd   = (d.phycfgr & 0x02) != 0;
+        bool duplex= (d.phycfgr & 0x04) != 0;
+        printf("  PHY          : link=%-4s  speed=%-6s  duplex=%s  PHYCFGR=0x%02X\n",
+               link ? "UP" : "DOWN",
+               spd  ? "100M" : "10M",
+               duplex ? "FULL" : "HALF",
+               d.phycfgr);
+
+        bool mode_ok   = (d.sock_mr == 0xA4);
+        bool status_ok = (d.sock_sr == 0x42);
+        const char *mode_str   = mode_ok   ? "MAC_RAW+FILTER" : "UNEXPECTED";
+        const char *status_str = status_ok ? "SOCK_MACRAW"
+                           : (d.sock_sr == 0x00) ? "SOCK_CLOSED"
+                           : "UNKNOWN";
+        printf("  Socket 0     : mode=0x%02X(%s)  status=0x%02X(%s)\n",
+               d.sock_mr, mode_str, d.sock_sr, status_str);
+        if (!mode_ok) {
+            printf("  *** Mode is wrong (expected 0xA4) — W5500 may have reset; run 'w5500 reset'\n");
+        } else if (!status_ok) {
+            bool link_up = (d.phycfgr & 0x01) != 0;
+            if (link_up) {
+                printf("  *** Socket CLOSED with link UP — link event may not have fired yet, or run 'w5500 reset'\n");
+            } else {
+                printf("  Socket CLOSED (link is down — will open when link comes up)\n");
+            }
+        }
+
+        bool tx_stuck = (d.tx_fsr == 0);
+        printf("  TX buffer    : free=%5u/16384  RD=0x%04X  WR=0x%04X%s\n",
+               d.tx_fsr, d.tx_rd, d.tx_wr,
+               tx_stuck ? "  *** STUCK — free=0" : "");
+
+        printf("  RX buffer    : pending=%5u      RD=0x%04X  WR=0x%04X\n",
+               d.rx_rsr, d.rx_rd, d.rx_wr);
+
+        printf("  Interrupts   : SIMR=0x%02X  SOCK0_IR=0x%02X  SOCK0_IMR=0x%02X\n",
+               d.simr, d.sock_ir, d.sock_imr);
+        if (d.simr != 0x01)   printf("  *** SIMR is 0x%02X, expected 0x01 (SOCK0 only)\n", d.simr);
+        if ((d.sock_imr & 0x1F) != 0x14) printf("  *** SOCK0_IMR is 0x%02X, effective 0x%02X, expected 0x14 (RECV+SEND)\n", d.sock_imr, d.sock_imr & 0x1F);
+        if (d.sock_ir & 0x10) printf("  *** SEND-done IRQ still pending (SIR_SEND) — TX may have timed out\n");
+        if (d.sock_ir & 0x04) printf("  *** RECV IRQ pending (SIR_RECV) — unprocessed RX data\n");
+
+        w5500_spi_stats_t spi = w5500_spi_get_stats();
+        printf("  SPI errors   : rd_fail=%"PRIu32"  rd_timeout=%"PRIu32
+               "  wr_fail=%"PRIu32"  wr_timeout=%"PRIu32"\n",
+               spi.read_spi_fail, spi.read_timeout,
+               spi.write_spi_fail, spi.write_timeout);
+
+    } else if (strcmp(action, "reset") == 0) {
+        esp_err_t err = w5500_reset_socket();
+        if (err == ESP_ERR_INVALID_STATE) {
+            printf("W5500 MAC not initialised\n");
+            return 1;
+        } else if (err != ESP_OK) {
+            printf("Socket reset failed: %s\n", esp_err_to_name(err));
+            return 1;
+        }
+        printf("W5500 socket reset complete.\n");
+
+    } else {
+        printf("Unknown action '%s'. Use: w5500 status | w5500 reset\n", action);
+        return 1;
+    }
+
+    return 0;
+}
+
+static void register_w5500(void)
+{
+    w5500_arg.action = arg_str1(NULL, NULL, "<status|reset>",
+                                "status: read W5500 registers and show diagnostics\n"
+                                "        reset:  soft-reset the socket without disturbing lwIP/NAT state");
+    w5500_arg.end = arg_end(1);
+
+    const esp_console_cmd_t cmd = {
+        .command = "w5500",
+        .help = "W5500 diagnostics and recovery. Usage: w5500 <status|reset>",
+        .hint = NULL,
+        .func = &w5500_cmd,
+        .argtable = &w5500_arg
+    };
+    ESP_ERROR_CHECK(esp_console_cmd_register(&cmd));
+}
+
+#endif // CONFIG_ETH_UPLINK && CONFIG_ETH_DRIVER_W5500
