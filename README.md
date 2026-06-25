@@ -470,6 +470,7 @@ Lists: `to_esp`, `from_esp`, `to_ap`, `from_ap` — Protocols: `IP`, `TCP`, `UDP
 | `show status` | Connection, clients, NAPT usage, heap, uptime |
 | `show config` | AP / PPPoE configuration |
 | `show mappings` | DHCP pool, reservations, port forwarding |
+| `show route` | Routing table: interfaces, connected + default routes |
 | `show acl` | All four firewall ACL lists with hit counts |
 | `show pppoe` | PPPoE link status and session details |
 | `show ota` | OTA partition info |
