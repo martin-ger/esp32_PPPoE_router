@@ -52,6 +52,8 @@ static const char *TAG = "remote_console";
 #define RC_OUTPUT_BUF_SIZE  4096
 #define RC_MAX_AUTH_ATTEMPTS 3
 #define RC_AUTH_DELAY_MS    5000
+#define RC_SHUTDOWN_TIMEOUT_MS 3000
+#define RC_SHUTDOWN_POLL_MS 20
 
 /* Banner and prompts */
 static const char *RC_BANNER =
@@ -85,7 +87,9 @@ static struct {
     int64_t last_activity_time;
     uint32_t total_connections;
     uint32_t failed_auths;
-    TaskHandle_t task_handle;
+    /* Cleared by the task itself just before vTaskDelete(); remote_console_disable()
+     * polls it, so it must not be cached in a register. */
+    TaskHandle_t volatile task_handle;
     SemaphoreHandle_t session_mutex;
     volatile bool kick_requested;
     volatile bool shutdown_requested;
@@ -279,7 +283,7 @@ esp_err_t remote_console_init(void) {
         /* Create server task */
         BaseType_t ret = xTaskCreate(remote_console_task, "remote_console",
                                      RC_TASK_STACK_SIZE, NULL,
-                                     RC_TASK_PRIORITY, &rc_state.task_handle);
+                                     RC_TASK_PRIORITY, (TaskHandle_t *)&rc_state.task_handle);
         if (ret != pdPASS) {
             ESP_LOGE(TAG, "Failed to create remote console task");
             return ESP_ERR_NO_MEM;
@@ -308,7 +312,7 @@ esp_err_t remote_console_enable(void) {
         rc_state.shutdown_requested = false;
         BaseType_t ret = xTaskCreate(remote_console_task, "remote_console",
                                      RC_TASK_STACK_SIZE, NULL,
-                                     RC_TASK_PRIORITY, &rc_state.task_handle);
+                                     RC_TASK_PRIORITY, (TaskHandle_t *)&rc_state.task_handle);
         if (ret != pdPASS) {
             ESP_LOGE(TAG, "Failed to create remote console task");
             rc_config.enabled = false;
@@ -340,11 +344,19 @@ esp_err_t remote_console_disable(void) {
         rc_state.server_socket = -1;
     }
 
-    /* Wait for task to exit */
+    /* Wait for the task to clear its own handle on the way out.  Nulling it
+     * here on a fixed delay let remote_console_enable() start a second task on
+     * the same port while the first was still running — and that first task
+     * would then see shutdown_requested reset to false and never exit. */
+    for (int waited = 0; rc_state.task_handle != NULL && waited < RC_SHUTDOWN_TIMEOUT_MS;
+         waited += RC_SHUTDOWN_POLL_MS) {
+        vTaskDelay(pdMS_TO_TICKS(RC_SHUTDOWN_POLL_MS));
+    }
     if (rc_state.task_handle != NULL) {
-        /* Give task time to clean up */
-        vTaskDelay(pdMS_TO_TICKS(500));
-        rc_state.task_handle = NULL;
+        /* shutdown_requested stays set, so the task still exits on its own and
+         * clears the handle.  remote_console_enable() refuses to start a second
+         * task while the handle is non-NULL, so this stays safe. */
+        ESP_LOGW(TAG, "Remote console task still shutting down");
     }
 
     rc_state.state = RC_STATE_DISABLED;
