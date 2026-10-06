@@ -16,7 +16,7 @@ An ESP32-based NAT WAN router for the **[WT32-ETH01](https://github.com/egnor/wt
 
 - PPPoE uplink over 802.3 Ethernet (PAP / CHAP / auto, optional VLAN tag)
 - Stateless packet firewall with four ACL lists and hit counters
-- DHCP server with IP reservations, client blocking, and static pool
+- DHCP server with IP reservations, client blocking, "known clients only" mode, and static pool
 - Port forwarding (TCP / UDP) with device-name resolution
 - WireGuard VPN client (route-all or split-tunnel, kill switch, VPN-bound port maps)
 - Dynamic DNS (DDNS) with automatic WAN IP registration — supports NoIP, DuckDNS, Selfhost.de, Dynu, and Namecheap
@@ -79,6 +79,7 @@ DHCP lease and reservation management, and port-forwarding rules:
 - DHCP pool overview with active leases
 - Add / delete IP reservations by MAC and device name
 - Block a device from receiving an IP
+- "Allow only known clients" switch — only MACs with a fixed-IP reservation may join the AP
 - Add / delete TCP and UDP port-forwarding rules
 
 **Firewall**
@@ -153,7 +154,10 @@ Reserve a fixed IP for a device by MAC address. Reserved IPs are never handed to
 dhcp_reserve add <mac> <ip> [-n <name>]        # Reserve IP for device
 dhcp_reserve del <mac>                         # Remove reservation
 dhcp_reserve block <mac> [-n <name>]           # Block device from getting any IP
+set_ap_known_only <on|off>                     # Allow only devices with a reservation
 ```
+
+With `set_ap_known_only on` (or the "Allow only known clients" switch on the Mappings page), any device without a fixed-IP reservation is disconnected as soon as it associates with the AP. It applies to new connections only — make sure the device you configure from has a reservation first.
 
 ### Port Forwarding
 
@@ -384,6 +388,7 @@ Connect to the serial console at **115200 bps** or via the remote console.
 | `dhcp_reserve add <mac> <ip> [-n <name>]` | Add DHCP reservation |
 | `dhcp_reserve del <mac>` | Delete reservation |
 | `dhcp_reserve block <mac> [-n <name>]` | Block device |
+| `set_ap_known_only <on\|off>` | Allow only clients with a fixed-IP reservation |
 | `portmap add <TCP\|UDP> <ext> <ip> <int>` | Add port forwarding rule |
 | `portmap del <TCP\|UDP> <ext_port>` | Delete port forwarding rule |
 

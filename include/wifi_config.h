@@ -60,6 +60,9 @@ void update_web_wan_acl(int wan_access);
 // AP SSID hidden (0 = visible, 1 = hidden)
 extern uint8_t ap_ssid_hidden;
 
+// Allow only known clients (1 = MACs without a fixed-IP reservation are blocked)
+extern uint8_t ap_known_only;
+
 // AP auth mode (0 = WPA2/WPA3, 1 = WPA2 only, 2 = WPA3 only)
 extern uint8_t ap_authmode;
 
