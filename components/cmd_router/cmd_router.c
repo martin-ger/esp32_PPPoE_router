@@ -3898,10 +3898,10 @@ static int ddns_cmd(int argc, char **argv)
         printf("Actions:\n");
         printf("  status              — Show current DDNS config and status\n");
         printf("  enable <0|1>        — Toggle DDNS\n");
-        printf("  provider <0|1|2>    — Select provider: 0=NoIP, 1=DuckDNS, 2=Selfhost.de\n");
+        printf("  provider <0-4>      — Select provider: 0=NoIP, 1=DuckDNS, 2=Selfhost.de, 3=Dynu, 4=Namecheap\n");
         printf("  hostname <fqdn>     — Set hostname (or subdomain for DuckDNS)\n");
-        printf("  token <token>       — Set token (DuckDNS/Selfhost) or username (NoIP)\n");
-        printf("  password <pw>       — Set password (NoIP only)\n");
+        printf("  token <token>       — Set token (DuckDNS), username (NoIP/Selfhost.de/Dynu) or API key (Namecheap)\n");
+        printf("  password <pw>       — Set password (NoIP/Selfhost.de/Dynu)\n");
         printf("  poll <hours>        — Set keep-alive interval (1-168 hours)\n");
         printf("  update              — Trigger immediate update\n");
         return 0;
@@ -3917,11 +3917,16 @@ static int ddns_cmd(int argc, char **argv)
     }
 
     if (strcmp(action, "enable") == 0) {
-        if (ddns_args.enable->count == 0) {
+        /* Accept both 'ddns enable 1' and 'ddns enable -e 1' */
+        int val;
+        if (ddns_args.arg1->count > 0) {
+            val = atoi(ddns_args.arg1->sval[0]);
+        } else if (ddns_args.enable->count > 0) {
+            val = ddns_args.enable->ival[0];
+        } else {
             printf("Usage: ddns enable <0|1>\n");
             return 1;
         }
-        int val = ddns_args.enable->ival[0];
         if (val < 0 || val > 1) {
             printf("Error: value must be 0 or 1\n");
             return 1;
@@ -3947,7 +3952,7 @@ static int ddns_cmd(int argc, char **argv)
         }
         int prov = atoi(ddns_args.arg1->sval[0]);
         if (prov < 0 || prov > 4) {
-            printf("Error: provider must be 0, 1, or 2\n");
+            printf("Error: provider must be 0-4\n");
             return 1;
         }
         nvs_handle_t h;
@@ -4064,7 +4069,7 @@ static void register_ddns_cmd(void)
 
     const esp_console_cmd_t cmd = {
         .command = "ddns",
-        .help = "Dynamic DNS client (NoIP, DuckDNS, Selfhost.de)",
+        .help = "Dynamic DNS client (NoIP, DuckDNS, Selfhost.de, Dynu, Namecheap)",
         .hint = NULL,
         .func = &ddns_cmd,
         .argtable = &ddns_args

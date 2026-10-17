@@ -104,10 +104,12 @@ The **Configuration** page exports the full NVS config as a JSON file and can im
 
 **Export — two modes depending on whether a passphrase is entered:**
 
-| Export type | WiFi passwords | WireGuard private key + PSK | PPPoE password |
-|-------------|----------------|-----------------------------|----------------|
-| Plain (no passphrase) | included | **omitted** | **omitted** |
-| Encrypted (passphrase) | included | included | included |
+| Export type | Credentials |
+|-------------|-------------|
+| Plain (no passphrase) | **omitted** |
+| Encrypted (passphrase) | included |
+
+Credentials are the AP and STA WiFi passwords, the PPPoE password, the WireGuard private key and preshared key, the router password hash, the MQTT password, and the DDNS token/password. After restoring a plain export, these values must be re-entered.
 
 Encrypted exports use XChaCha20-Poly1305 AEAD with a 32-byte key derived from the passphrase via PBKDF2-HMAC-SHA256 (10 000 iterations, 16-byte random salt). The ciphertext is wrapped in a JSON envelope `{"enc":1,"s":"…","n":"…","c":"…"}` so encrypted and plain files share the same `.json` extension and the import handler detects the format automatically.
 
@@ -135,9 +137,9 @@ set_pppoe -e <0|1>                             # Enable / disable PPPoE
 ### AP (WiFi Clients)
 
 ```bash
-set_ap <ssid> <password>                       # Configure AP (empty password = open)
+set_ap <ssid> <password>                       # Configure AP ("" = open)
 set_ap_ip <ip>                                 # Change AP subnet (e.g. 192.168.4.1)
-set_ap_dns <ip>                                # Custom DNS for clients (empty = upstream)
+set_ap_dns <ip>                                # Custom DNS for clients ("" = upstream)
 set_ap_auth <wpa2|wpa3|wpa2wpa3>              # Auth mode (requires restart)
 set_ap_hidden <on|off>                         # Hide SSID (requires restart)
 set_ap_channel <0-N>                           # 0 = auto; max N depends on country (requires restart)
@@ -241,14 +243,12 @@ ddns update
 ddns status
 ```
 
-Home Assistant sensors are published automatically (status, provider, hostname, last-update timestamp).
-
 ### Other Network Settings
 
 ```bash
 set_sta_static <ip> <subnet> <gw>             # Static Ethernet WAN IP (PPPoE disabled only)
 set_sta_static dhcp                           # Revert WAN to DHCP (requires restart)
-set_ap_mac <xx:xx:xx:xx:xx:xx>               # Override AP MAC
+set_ap_mac <o1> <o2> <o3> <o4> <o5> <o6>     # Override AP MAC (six octets, e.g. 0x02 0x11 ...)
 set_hostname <name>                           # DHCP client hostname (max 32 chars)
 set_ttl <0-255>                               # TTL override (0 = disabled)
 set_tx_power <2-20|0>                         # WiFi TX power in dBm (0 = max/default)
@@ -321,10 +321,10 @@ pcap status                                    # Show mode, client, and packet s
 
 ### Remote Console
 
-Network-accessible CLI on TCP (default port 2323). Requires the router password to be set before enabling.
+Network-accessible CLI on TCP (default port 2323). Login uses the router password; if no password is set, the console accepts connections without authentication (with a warning), so set one with `set_router_password` before enabling it.
 
 ```bash
-remote_console enable                          # Enable (requires password set)
+remote_console enable                          # Enable
 remote_console disable                         # Disable
 remote_console port <port>                     # Change TCP port (default 2323)
 remote_console timeout <seconds>               # Idle timeout (0 = no timeout)
@@ -356,16 +356,16 @@ Connect to the serial console at **115200 bps** or via the remote console.
 |---------|-------------|
 | `set_sta_static <ip> <sub> <gw>` | Static IP for Ethernet WAN (PPPoE disabled only) |
 | `set_sta_static dhcp` | Revert WAN to DHCP (restart required) |
-| `set_ap <ssid> [pass]` | Configure WiFi AP (empty pass = open) |
+| `set_ap <ssid> <pass>` | Configure WiFi AP (`""` = open) |
 | `set_ap_ip <ip>` | Change AP subnet IP |
-| `set_ap_dns [ip]` | DNS for AP clients (empty = upstream) |
-| `set_ap_mac <mac>` | Override AP MAC address |
+| `set_ap_dns <ip>` | DNS for AP clients (`""` = upstream) |
+| `set_ap_mac <o1> … <o6>` | Override AP MAC address (six space-separated octets) |
 | `set_ap_nat <on\|off>` | Enable / disable NAT (restart required) |
 | `set_ap_hidden <on\|off>` | Hide AP SSID (restart required) |
 | `set_ap_auth <mode>` | AP auth: wpa2, wpa3, wpa2wpa3 (restart required) |
 | `set_ap_channel <0-N>` | AP WiFi channel (0=auto, max N by country, restart required) |
 | `set_wifi_country <CC>` | WiFi country code (2-char ISO 3166 or `01` for world-safe); sets allowed channel range — `US`/`CA`/`01`: 1–11, most others: 1–13, `JP`: 1–14 |
-| `set_hostname [name]` | DHCP client hostname (empty = default) |
+| `set_hostname <name>` | DHCP client hostname (`""` = default) |
 | `set_ttl [0-255]` | TTL override for upstream packets (0=off) |
 | `set_tx_power [2-20\|0]` | WiFi AP TX power in dBm (0=max, applies immediately) |
 | `ap [enable\|disable]` | Show or enable/disable AP immediately |
@@ -409,10 +409,7 @@ Lists: `to_esp`, `from_esp`, `to_ap`, `from_ap` — Protocols: `IP`, `TCP`, `UDP
 | Command | Description |
 |---------|-------------|
 | `show vpn` | VPN status and full configuration |
-| `set_vpn <privkey>` | Set private key (base64) |
-| `set_vpn <pubkey>` | Set peer public key (base64) |
-| `set_vpn <endpoint>` | Set peer host / IP |
-| `set_vpn <address>` | Set tunnel IP address |
+| `set_vpn <privkey> <pubkey> <endpoint> <address>` | Private key, peer public key (both base64), peer host / IP, tunnel IP. Positional, in this order — to set a later one, the earlier ones must be given too |
 | `set_vpn -m <netmask>` | Tunnel netmask (default 255.255.255.0) |
 | `set_vpn -d <dns_ip>` | DNS server for AP clients while VPN is up |
 | `set_vpn -p <port>` | Peer UDP port (default 51820) |
@@ -478,6 +475,7 @@ Lists: `to_esp`, `from_esp`, `to_ap`, `from_ap` — Protocols: `IP`, `TCP`, `UDP
 | `show route` | Routing table: interfaces, connected + default routes |
 | `show acl` | All four firewall ACL lists with hit counts |
 | `show pppoe` | PPPoE link status and session details |
+| `show vpn` | VPN status and configuration |
 | `show ota` | OTA partition info |
 | `bytes [reset]` | Show or reset WAN byte counters |
 | `client_stats <enable\|disable>` | Per-client traffic stats |
@@ -512,13 +510,19 @@ Home Assistant auto-discovers these entities (when enabled):
 
 | Entity | Type | Description |
 |---------|---------|-----------|
+| Uplink Status | binary sensor | Uplink connectivity status |
+| PPPoE Session | binary sensor | PPPoE session state |
 | WAN IP | sensor | Current WAN IP address |
-| Up link | binary sensor | Uplink connectivity status |
-| PPPoE | binary sensor | PPPoE session state |
+| Connected Clients | sensor | Number of connected AP clients |
+| Bytes Sent / Bytes Received | sensor | WAN byte counters |
+| Free Heap | sensor | Current free heap |
+| Uptime | sensor | Router uptime |
 | Web UI | switch | Enable / disable web interface |
 | Remote Console | switch | Enable / disable remote console |
+| AP Interface | switch | Enable / disable the WiFi AP |
 | Restart | button | Trigger router restart |
-(All entities publish to the shared router state topic alongside uplink, client count, byte counters, heap, uptime, and WAN IP.)
+
+For every DHCP reservation, per-client entities are added as well: `<name> Presence` (binary sensor), `<name> TX`, `<name> RX` and `<name> RSSI` (sensors). The reservation's device name is used, or the MAC address if it has none.
 
 ---
 
@@ -526,12 +530,12 @@ Home Assistant auto-discovers these entities (when enabled):
 
 ### Management Interface Exposure
 
-The web interface and remote console are accessible from the LAN (AP subnet) only by default. Any connection from outside the AP subnet is dropped at the TCP open callback. The same gate applies to both the web server and the remote console. The web server is additionally protected by an automatically inserted ACL rule, the remote console listens only an the AP interface. A connection is only allowed if:
+The web interface and remote console are accessible from the LAN (AP subnet) only by default. Any connection from outside the AP subnet is dropped at the TCP open callback. The same gate applies to both the web server and the remote console. The web server is additionally protected by an automatically inserted ACL rule, the remote console listens only on the AP interface. A connection is only allowed if:
 
 1. The `wan_access` flag is enabled (opt-in, disabled by default), **or**
 2. The client IP falls within the AP's /24 subnet.
 
-Enable WAN access only if the router's management port is not reachable from the internet (e.g., in a local environmet or behind another NAT).
+Enable WAN access only if the router's management port is not reachable from the internet (e.g., in a local environment or behind another NAT).
 
 ```bash
 web_ui wan_access on    # Allow management from WAN (takes effect immediately for web interface, console after reboot)
@@ -540,11 +544,11 @@ web_ui wan_access off   # Restore LAN-only access immediately
 
 ### Authentication
 
-A single shared password protects the web interface and the remote console. With no password set, the managment interface would be fully open. In this case wan access is generally prohibited.
+A single shared password protects the web interface and the remote console. With no password set, the management interface would be fully open. In this case wan access is generally prohibited.
 
 **Password storage:** Passwords are stored in NVS as `salt_hex:hash_hex` — a 16-byte random salt followed by a SHA-256 hash of `salt || password`.
 
-**Web sessions:** After login, the server issues a 31-character random hex token (drawn from `esp_random()`) as a session cookie. Sessions expire after 30 minutes of inactivity; activity resets the timer. Only one session exists at a time. The cookie is set with `SameSite=Strict` but without `HttpOnly` or `Secure` (no TLS).
+**Web sessions:** After login, the server issues a 32-character random hex token (drawn from `esp_random()`) as a session cookie. Sessions expire after 30 minutes of inactivity; activity resets the timer. Only one session exists at a time. The cookie is set with `SameSite=Strict` and `HttpOnly`, but without `Secure` (no TLS).
 
 **Remote console:** The console enforces a maximum of 3 failed login attempts per connection, after which the connection is dropped and a 5-second delay is imposed before reconnection. Failed attempts are logged and counted in `remote_console status`.
 
